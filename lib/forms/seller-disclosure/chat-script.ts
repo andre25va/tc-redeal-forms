@@ -132,6 +132,8 @@ export const OCCUPANCY_SCRIPT: ScriptStep[] = [
       `¿Cuál es la edad aproximada de la propiedad${address ? ` en ${address}` : ''}? (años)`,
     fieldKey: 'occ_property_age',
     freeText: true,
+    // Skip if property lookup already filled this in
+    skipIf: (vals) => !!vals['occ_property_age'],
   },
   {
     id: 'occ_years_owned',

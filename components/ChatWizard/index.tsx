@@ -284,9 +284,10 @@ export default function ChatWizard({
     const script = SCRIPTED_SECTIONS[section.id]
     if (!script) return
 
+    // Merge formValuesRef + scriptTempValsRef for skipIf checks
     const allVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
     let stepIdx = scriptStepIndexRef.current
-    // Skip any steps that no longer apply
+    // Skip any steps whose skipIf condition is now met
     while (stepIdx < script.length && script[stepIdx].skipIf?.(allVals)) {
       stepIdx++
     }
@@ -319,7 +320,12 @@ export default function ChatWizard({
       if (isConfirm) {
         if (propertyData.yearBuilt) {
           const age = new Date().getFullYear() - propertyData.yearBuilt
-          onUpdate('occ_property_age', String(age))
+          const ageStr = String(age)
+          // Write to BOTH onUpdate (form state) AND scriptTempValsRef so
+          // resumeCurrentScript can see it immediately without waiting for
+          // React to re-render and sync formValuesRef
+          onUpdate('occ_property_age', ageStr)
+          scriptTempValsRef.current = { ...scriptTempValsRef.current, occ_property_age: ageStr }
         }
         if (propertyData.hoa === 'yes') {
           onUpdate('tax_j', 'yes')
@@ -332,15 +338,13 @@ export default function ChatWizard({
           role: 'assistant',
           content: language === 'es' ? 'Guardado. Continuemos.' : 'Saved. Moving on.',
         }])
-        // Resume the current scripted section (or AI section) after short delay
+        // Resume the current scripted section after short delay
         setTimeout(() => resumeCurrentScript(), 600)
       } else {
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: language === 'es' ? '¿Qué necesita corregir?' : 'What needs to be corrected?',
         }])
-        // Still resume after correction note — let them type a correction
-        // (they can type in the input box; the next sendMessage will hit script mode)
       }
       return
     }
