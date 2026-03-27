@@ -4,8 +4,7 @@ import { FormSection, PdfField } from '@/types'
 import ChoiceField from '@/components/fields/ChoiceField'
 import FixtureStatusField from '@/components/fields/FixtureStatusField'
 import SignatureField from '@/components/fields/SignatureField'
-import Button from '@/components/ui/Button'
-import { CheckCircle, ChevronRight, ChevronLeft } from 'lucide-react'
+import { CheckCircle, ChevronRight, ChevronLeft, Home, Clock } from 'lucide-react'
 
 interface FormWizardProps {
   sections: FormSection[]
@@ -16,9 +15,27 @@ interface FormWizardProps {
     property_address?: string
     seller_email: string
   }
+  isDemo?: boolean
 }
 
-export default function FormWizard({ sections, token, initialData, invitation }: FormWizardProps) {
+const SECTION_ICONS: Record<string, string> = {
+  seller_property: '👤',
+  occupancy: '🏠',
+  construction: '🏗️',
+  land: '🌍',
+  roof: '🏚️',
+  plumbing: '🚿',
+  hvac: '❄️',
+  electrical: '⚡',
+  tax_hoa: '📋',
+  utilities: '🔌',
+  electronics: '📡',
+  fixtures: '🔧',
+  final: '📝',
+  signatures: '✍️',
+}
+
+export default function FormWizard({ sections, token, initialData, invitation, isDemo }: FormWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [formData, setFormData] = useState<Record<string, unknown>>(initialData)
   const [saving, setSaving] = useState(false)
@@ -28,7 +45,7 @@ export default function FormWizard({ sections, token, initialData, invitation }:
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [error, setError] = useState('')
 
-  const totalSteps = sections.length + 1 // +1 for review step
+  const totalSteps = sections.length + 1
   const isReviewStep = currentStep === sections.length
   const currentSection = !isReviewStep ? sections[currentStep] : null
   const progress = Math.round((currentStep / totalSteps) * 100)
@@ -38,6 +55,7 @@ export default function FormWizard({ sections, token, initialData, invitation }:
   }
 
   const autoSave = useCallback(async (data: Record<string, unknown>) => {
+    if (isDemo) return
     try {
       setSaving(true)
       await fetch(`/api/forms/${token}/save`, {
@@ -47,11 +65,11 @@ export default function FormWizard({ sections, token, initialData, invitation }:
       })
       setLastSaved(new Date())
     } catch {
-      // Silent fail on auto-save
+      // Silent fail
     } finally {
       setSaving(false)
     }
-  }, [token])
+  }, [token, isDemo])
 
   const goNext = async () => {
     await autoSave(formData)
@@ -65,6 +83,10 @@ export default function FormWizard({ sections, token, initialData, invitation }:
   }
 
   const handleSubmit = async () => {
+    if (isDemo) {
+      setSubmitted(true)
+      return
+    }
     setSubmitting(true)
     setError('')
     try {
@@ -123,27 +145,27 @@ export default function FormWizard({ sections, token, initialData, invitation }:
 
     if (field.type === 'textarea') {
       return (
-        <div key={field.key} className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+        <div key={field.key} className="mb-5">
+          <label className="block text-sm font-semibold text-gray-700 mb-1.5">{field.label}</label>
           <textarea
             value={value}
             onChange={e => setFieldValue(field.key, e.target.value)}
             rows={4}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
-            placeholder={`Enter ${field.label.toLowerCase()}...`}
+            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50 placeholder-gray-400 transition"
+            placeholder={`Enter details...`}
           />
         </div>
       )
     }
 
     return (
-      <div key={field.key} className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
+      <div key={field.key} className="mb-5">
+        <label className="block text-sm font-semibold text-gray-700 mb-1.5">{field.label}</label>
         <input
           type={field.type === 'date' ? 'date' : 'text'}
           value={value}
           onChange={e => setFieldValue(field.key, e.target.value)}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+          className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 placeholder-gray-400 transition"
           placeholder={field.type !== 'date' ? `Enter ${field.label.toLowerCase()}...` : undefined}
         />
       </div>
@@ -152,23 +174,33 @@ export default function FormWizard({ sections, token, initialData, invitation }:
 
   if (submitted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle className="w-10 h-10 text-green-600" />
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl shadow-xl p-10 max-w-md w-full text-center border border-gray-100">
+          <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CheckCircle className="w-12 h-12 text-green-500" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Form Submitted!</h1>
-          <p className="text-gray-600 mb-6">
-            Your Seller Disclosure Addendum has been submitted successfully. Copies have been sent to all parties via email.
+          <h1 className="text-2xl font-bold text-gray-900 mb-3">
+            {isDemo ? 'Demo Complete!' : 'Form Submitted!'}
+          </h1>
+          <p className="text-gray-500 mb-8 leading-relaxed">
+            {isDemo
+              ? 'This was a preview of the Seller Disclosure form. In the real form, a filled PDF would be emailed to all parties.'
+              : 'Your Seller Disclosure Addendum has been submitted. Copies have been emailed to all parties.'
+            }
           </p>
           {pdfUrl && (
             <a
               href={pdfUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold py-2.5 px-5 rounded-lg transition-colors"
+              className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-7 rounded-xl transition-colors shadow-md shadow-indigo-200"
             >
               Download Your PDF
+            </a>
+          )}
+          {isDemo && (
+            <a href="/admin" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-medium mt-4">
+              ← Back to Dashboard
             </a>
           )}
         </div>
@@ -179,25 +211,66 @@ export default function FormWizard({ sections, token, initialData, invitation }:
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header className="bg-white border-b border-gray-100 sticky top-0 z-10 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <h1 className="font-bold text-gray-900">Seller Disclosure Addendum</h1>
-              <p className="text-xs text-gray-500">{invitation.property_address || 'Property Form'}</p>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
+                <Home className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <h1 className="font-bold text-gray-900 text-sm leading-tight">Seller Disclosure Addendum</h1>
+                <p className="text-xs text-gray-400 truncate max-w-[200px]">
+                  {invitation.property_address || invitation.seller_name || 'Property Form'}
+                </p>
+              </div>
             </div>
             <div className="text-right">
-              <p className="text-xs text-gray-400">
-                {saving ? 'Saving...' : lastSaved ? `Saved ${lastSaved.toLocaleTimeString()}` : 'Not saved yet'}
+              <div className="flex items-center gap-1 justify-end text-xs text-gray-400 mb-0.5">
+                {saving ? (
+                  <>
+                    <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : lastSaved ? (
+                  <>
+                    <Clock className="w-3 h-3" />
+                    Saved {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </>
+                ) : null}
+              </div>
+              <p className="text-xs font-semibold text-gray-600">
+                Step {currentStep + 1} of {totalSteps}
               </p>
-              <p className="text-xs font-medium text-gray-600">Step {currentStep + 1} of {totalSteps}</p>
             </div>
           </div>
           {/* Progress bar */}
-          <div className="w-full bg-gray-200 rounded-full h-1.5">
+          <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
             <div
-              className="bg-brand-600 h-1.5 rounded-full transition-all duration-300"
+              className="bg-indigo-600 h-1.5 rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }}
+            />
+          </div>
+          {/* Step dots */}
+          <div className="flex gap-1 mt-2 justify-center overflow-x-auto py-0.5">
+            {sections.map((s, i) => (
+              <button
+                key={s.id}
+                onClick={() => i <= currentStep && setCurrentStep(i)}
+                className={`h-1.5 rounded-full transition-all shrink-0 ${
+                  i < currentStep
+                    ? 'bg-indigo-400 w-4 cursor-pointer'
+                    : i === currentStep
+                    ? 'bg-indigo-600 w-6'
+                    : 'bg-gray-200 w-1.5 cursor-default'
+                }`}
+                title={s.title}
+              />
+            ))}
+            <div
+              className={`h-1.5 rounded-full transition-all shrink-0 ${
+                isReviewStep ? 'bg-indigo-600 w-6' : 'bg-gray-200 w-1.5'
+              }`}
             />
           </div>
         </div>
@@ -208,12 +281,15 @@ export default function FormWizard({ sections, token, initialData, invitation }:
         {!isReviewStep && currentSection && (
           <div>
             <div className="mb-6">
-              <h2 className="text-xl font-bold text-gray-900">{currentSection.title}</h2>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="text-2xl">{SECTION_ICONS[currentSection.id] || '📄'}</span>
+                <h2 className="text-xl font-bold text-gray-900">{currentSection.title}</h2>
+              </div>
               {currentSection.description && (
-                <p className="text-sm text-gray-500 mt-1">{currentSection.description}</p>
+                <p className="text-sm text-gray-500 ml-10">{currentSection.description}</p>
               )}
             </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
               {currentSection.fields.map(field => renderField(field))}
             </div>
           </div>
@@ -222,55 +298,97 @@ export default function FormWizard({ sections, token, initialData, invitation }:
         {isReviewStep && (
           <div>
             <div className="mb-6">
-              <h2 className="text-xl font-bold text-gray-900">Review & Submit</h2>
-              <p className="text-sm text-gray-500 mt-1">Please review your answers before submitting.</p>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="text-2xl">✅</span>
+                <h2 className="text-xl font-bold text-gray-900">Review & Submit</h2>
+              </div>
+              <p className="text-sm text-gray-500 ml-10">Please review your answers before submitting.</p>
             </div>
-            {sections.map(section => {
-              const filledFields = section.fields.filter(f => formData[f.key])
-              if (filledFields.length === 0) return null
-              return (
-                <div key={section.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-4">
-                  <h3 className="font-semibold text-gray-900 mb-3">{section.title}</h3>
-                  <div className="space-y-2">
-                    {filledFields.filter(f => f.type !== 'signature').map(field => (
-                      <div key={field.key} className="flex text-sm">
-                        <span className="text-gray-500 w-48 flex-shrink-0">{field.label}:</span>
-                        <span className="text-gray-900 font-medium">
-                          {String(formData[field.key] || '').slice(0, 80)}
-                        </span>
-                      </div>
-                    ))}
-                    {filledFields.filter(f => f.type === 'signature').map(field => (
-                      <div key={field.key} className="flex text-sm items-center">
-                        <span className="text-gray-500 w-48 flex-shrink-0">{field.label}:</span>
-                        <span className="text-green-600 font-medium">✓ Signed</span>
-                      </div>
-                    ))}
+
+            <div className="space-y-3">
+              {sections.map(section => {
+                const filledFields = section.fields.filter(f => formData[f.key])
+                if (filledFields.length === 0) return null
+                return (
+                  <div key={section.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
+                      <span className="text-base">{SECTION_ICONS[section.id] || '📄'}</span>
+                      <h3 className="font-semibold text-gray-900 text-sm">{section.title}</h3>
+                      <span className="ml-auto text-xs text-gray-400">
+                        {filledFields.length} field{filledFields.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="p-5 space-y-2">
+                      {filledFields.filter(f => f.type !== 'signature').map(field => (
+                        <div key={field.key} className="flex text-sm gap-3">
+                          <span className="text-gray-400 w-44 shrink-0 text-xs pt-0.5">{field.label}</span>
+                          <span className="text-gray-900 font-medium text-xs">
+                            {String(formData[field.key] || '').slice(0, 80)}
+                          </span>
+                        </div>
+                      ))}
+                      {filledFields.filter(f => f.type === 'signature').map(field => (
+                        <div key={field.key} className="flex text-sm gap-3 items-center">
+                          <span className="text-gray-400 w-44 shrink-0 text-xs">{field.label}</span>
+                          <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
+                            <CheckCircle className="w-3 h-3" /> Signed
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
+
             {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-red-700 text-sm">{error}</div>
+              <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{error}</div>
             )}
           </div>
         )}
       </main>
 
       {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 shadow-lg">
         <div className="max-w-2xl mx-auto px-4 py-4 flex justify-between items-center">
-          <Button variant="secondary" onClick={goBack} disabled={currentStep === 0}>
-            <ChevronLeft className="w-4 h-4 mr-1" /> Back
-          </Button>
+          <button
+            onClick={goBack}
+            disabled={currentStep === 0}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
+
+          {!isReviewStep && (
+            <span className="text-xs text-gray-400">
+              {currentSection?.title}
+            </span>
+          )}
+
           {isReviewStep ? (
-            <Button onClick={handleSubmit} loading={submitting} className="gap-2">
-              Submit Form <CheckCircle className="w-4 h-4 ml-1" />
-            </Button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex items-center gap-2 px-7 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+            >
+              {submitting ? (
+                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Submitting...</>
+              ) : (
+                <><CheckCircle className="w-4 h-4" /> {isDemo ? 'Finish Preview' : 'Submit Form'}</>
+              )}
+            </button>
           ) : (
-            <Button onClick={goNext} loading={saving}>
-              Next <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
+            <button
+              onClick={goNext}
+              disabled={saving}
+              className="flex items-center gap-2 px-7 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 transition-all"
+            >
+              {saving ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <>Next <ChevronRight className="w-4 h-4" /></>
+              )}
+            </button>
           )}
         </div>
       </div>

@@ -1,40 +1,59 @@
 'use client'
-import { cn } from '@/lib/utils'
 
 interface FixtureStatusFieldProps {
   label: string
   value: string
-  onChange: (val: string) => void
+  onChange: (value: string) => void
 }
 
-const statuses = [
-  { code: 'OS', label: 'OS', desc: 'Owned by Seller' },
-  { code: 'EX', label: 'EX', desc: 'Excluded' },
-  { code: 'NA', label: 'NA', desc: 'Not Applicable' },
-  { code: 'NS', label: 'NS', desc: 'Not Sure' },
-]
+const STATUS_CONFIG: Record<string, { label: string; description: string; activeClass: string }> = {
+  OS: {
+    label: 'OS',
+    description: 'Owned by Seller',
+    activeClass: 'bg-blue-500 text-white border-blue-500 shadow-md shadow-blue-100',
+  },
+  EX: {
+    label: 'EX',
+    description: 'Excluded',
+    activeClass: 'bg-orange-500 text-white border-orange-500 shadow-md shadow-orange-100',
+  },
+  NA: {
+    label: 'NA',
+    description: 'Not Applicable',
+    activeClass: 'bg-gray-400 text-white border-gray-400 shadow-sm',
+  },
+  NS: {
+    label: 'NS',
+    description: 'Not Sure',
+    activeClass: 'bg-purple-500 text-white border-purple-500 shadow-md shadow-purple-100',
+  },
+}
 
 export default function FixtureStatusField({ label, value, onChange }: FixtureStatusFieldProps) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-      <span className="text-sm text-gray-700 flex-1">{label}</span>
-      <div className="flex gap-1.5 ml-4">
-        {statuses.map(s => (
-          <button
-            key={s.code}
-            type="button"
-            title={s.desc}
-            onClick={() => onChange(s.code)}
-            className={cn(
-              'w-10 h-8 rounded-md border-2 font-bold text-xs transition-all',
-              value === s.code
-                ? 'border-brand-600 bg-brand-600 text-white'
-                : 'border-gray-300 bg-white text-gray-600 hover:border-brand-400'
-            )}
-          >
-            {s.code}
-          </button>
-        ))}
+    <div className="mb-4 flex items-center justify-between gap-4 py-2 border-b border-gray-100 last:border-0">
+      <label className="text-sm font-medium text-gray-700 flex-1">{label}</label>
+      <div className="flex gap-1.5 shrink-0">
+        {Object.entries(STATUS_CONFIG).map(([key, config]) => {
+          const isActive = value === key
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onChange(isActive ? '' : key)}
+              title={config.description}
+              className={`
+                w-10 h-9 rounded-lg border-2 text-xs font-bold transition-all
+                ${isActive
+                  ? config.activeClass
+                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }
+              `}
+            >
+              {config.label}
+            </button>
+          )
+        })}
       </div>
     </div>
   )

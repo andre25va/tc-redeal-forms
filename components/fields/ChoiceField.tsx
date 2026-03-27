@@ -1,46 +1,48 @@
 'use client'
-import { cn } from '@/lib/utils'
 
 interface ChoiceFieldProps {
   label: string
   value: string
-  onChange: (val: string) => void
+  onChange: (value: string) => void
   choices: string[]
-  required?: boolean
 }
 
-const choiceLabels: Record<string, string> = {
-  yes: 'Yes',
-  no: 'No',
-  na: 'N/A',
-  OS: 'OS - Owned by Seller',
-  EX: 'EX - Excluded',
-  NA: 'NA - Not Applicable',
-  NS: 'NS - Not Sure',
+const CHOICE_CONFIG: Record<string, { label: string; activeClass: string; emoji: string }> = {
+  yes: { label: 'Yes', activeClass: 'bg-green-500 text-white border-green-500 shadow-md shadow-green-100', emoji: '✓' },
+  no: { label: 'No', activeClass: 'bg-red-400 text-white border-red-400 shadow-md shadow-red-100', emoji: '✗' },
+  na: { label: 'N/A', activeClass: 'bg-gray-400 text-white border-gray-400 shadow-sm', emoji: '' },
 }
 
-export default function ChoiceField({ label, value, onChange, choices, required }: ChoiceFieldProps) {
+export default function ChoiceField({ label, value, onChange, choices }: ChoiceFieldProps) {
   return (
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        {label}{required && <span className="text-red-500 ml-1">*</span>}
-      </label>
-      <div className="flex flex-wrap gap-2">
-        {choices.map(choice => (
-          <button
-            key={choice}
-            type="button"
-            onClick={() => onChange(choice)}
-            className={cn(
-              'px-4 py-2 rounded-lg border-2 font-medium text-sm transition-all',
-              value === choice
-                ? 'border-brand-600 bg-brand-50 text-brand-700'
-                : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400'
-            )}
-          >
-            {choiceLabels[choice] || choice}
-          </button>
-        ))}
+    <div className="mb-5">
+      <label className="block text-sm font-semibold text-gray-700 mb-2">{label}</label>
+      <div className="flex gap-2 flex-wrap">
+        {choices.map(choice => {
+          const config = CHOICE_CONFIG[choice.toLowerCase()] || {
+            label: choice.toUpperCase(),
+            activeClass: 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100',
+            emoji: '',
+          }
+          const isActive = value === choice
+          return (
+            <button
+              key={choice}
+              type="button"
+              onClick={() => onChange(isActive ? '' : choice)}
+              className={`
+                flex items-center gap-1.5 px-5 py-2 rounded-xl border-2 text-sm font-semibold transition-all
+                ${isActive
+                  ? config.activeClass
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }
+              `}
+            >
+              {config.emoji && <span className="text-base leading-none">{config.emoji}</span>}
+              {config.label}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
