@@ -62,9 +62,14 @@ export default function ChatWizard({
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
   const scriptTempValsRef = useRef<Record<string, unknown>>({})
   const formValuesRef = useRef(formValues)
-  // When multiple address candidates come back, wait for user to pick
   const awaitingAddressPickRef = useRef(false)
+  // Track current section index in a ref so callbacks always see latest value
+  const sectionIndexRef = useRef(0)
+  const scriptStepIndexRef = useRef(0)
+
   useEffect(() => { formValuesRef.current = formValues }, [formValues])
+  useEffect(() => { sectionIndexRef.current = sectionIndex }, [sectionIndex])
+  useEffect(() => { scriptStepIndexRef.current = scriptStepIndex }, [scriptStepIndex])
 
   const t = UI[language]
   void t
@@ -271,6 +276,33 @@ export default function ChatWizard({
     }
   }, [chatSections, language, callChat, onUpdate, onComplete, initScriptedSection])
 
+  // ── Re-prompt the current scripted step (used after property card interlude) ──
+  const resumeCurrentScript = useCallback(() => {
+    const secIdx = sectionIndexRef.current
+    const section = chatSections[secIdx]
+    if (!section) return
+    const script = SCRIPTED_SECTIONS[section.id]
+    if (!script) return
+
+    const allVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
+    let stepIdx = scriptStepIndexRef.current
+    // Skip any steps that no longer apply
+    while (stepIdx < script.length && script[stepIdx].skipIf?.(allVals)) {
+      stepIdx++
+    }
+    if (stepIdx >= script.length) {
+      setCompletedSections(prev => new Set([...prev, secIdx]))
+      advanceToSection(secIdx + 1)
+      return
+    }
+    const step = script[stepIdx]
+    const ctx = buildScriptCtx(allVals, invitation.property_address)
+    const q = language === 'es' ? step.questionEs(ctx) : step.question(ctx)
+    const opts = language === 'es' ? (step.optionsEs ?? step.options) : step.options
+    setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+    setScriptStepIndex(stepIdx)
+  }, [chatSections, advanceToSection, language, invitation.property_address])
+
   // ── Send a message (script mode or AI mode) ──────────────────────────────────
   const sendMessage = useCallback(async (text?: string) => {
     const msgText = (text ?? input).trim()
@@ -300,11 +332,15 @@ export default function ChatWizard({
           role: 'assistant',
           content: language === 'es' ? 'Guardado. Continuemos.' : 'Saved. Moving on.',
         }])
+        // Resume the current scripted section (or AI section) after short delay
+        setTimeout(() => resumeCurrentScript(), 600)
       } else {
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: language === 'es' ? '¿Qué necesita corregir?' : 'What needs to be corrected?',
         }])
+        // Still resume after correction note — let them type a correction
+        // (they can type in the input box; the next sendMessage will hit script mode)
       }
       return
     }
@@ -323,14 +359,12 @@ export default function ChatWizard({
         const retypeOpts = ['None of these — let me retype', 'Ninguna — quiero escribirla']
         const isRetype = retypeOpts.some(r => msgText.toLowerCase().includes(r.toLowerCase().slice(0, 12)))
         if (isRetype) {
-          // Ask them to type the full address again
           setMessages(prev => [...prev, {
             role: 'assistant',
             content: language === 'es'
               ? 'Escribe la dirección completa:'
               : 'Type the full address:',
           }])
-          // Keep scriptStepIndex on property_address so next answer re-triggers normalize
           return
         }
         // User picked a candidate — store and advance to confirm step
@@ -383,7 +417,6 @@ export default function ChatWizard({
           const candidates: string[] = Array.isArray(data.candidates) ? data.candidates : []
 
           if (candidates.length > 1) {
-            // Multiple possible matches — ask seller to pick
             setLoading(false)
             awaitingAddressPickRef.current = true
             const retypeLabel = language === 'es'
@@ -403,7 +436,6 @@ export default function ChatWizard({
           const normalized = candidates[0]?.trim() || msgText
           scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: normalized }
         } catch {
-          // On failure, keep original
           scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: msgText }
         }
         setLoading(false)
@@ -438,7 +470,6 @@ export default function ChatWizard({
         setTimeout(() => advanceToSection(sectionIndex + 1), 600)
       } else {
         const nextStep = script[nextIdx]
-        // Build context using latest vals (including normalized address)
         const latestVals = { ...formValuesRef.current, ...scriptTempValsRef.current, ...updates }
         const ctx = buildScriptCtx(latestVals, invitation.property_address)
         const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
@@ -485,7 +516,7 @@ export default function ChatWizard({
     } finally {
       setLoading(false)
     }
-  }, [input, loading, currentSection, scriptStepIndex, sectionIndex, advanceToSection, onUpdate, language, callChat, getAllVals, invitation.property_address])
+  }, [input, loading, currentSection, scriptStepIndex, sectionIndex, advanceToSection, onUpdate, language, callChat, getAllVals, invitation.property_address, resumeCurrentScript])
 
   const skipSection = () => {
     setCompletedSections(prev => new Set([...prev, sectionIndex]))
