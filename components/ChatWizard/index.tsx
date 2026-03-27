@@ -62,6 +62,8 @@ export default function ChatWizard({
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
   const scriptTempValsRef = useRef<Record<string, unknown>>({})
   const formValuesRef = useRef(formValues)
+  // When multiple address candidates come back, wait for user to pick
+  const awaitingAddressPickRef = useRef(false)
   useEffect(() => { formValuesRef.current = formValues }, [formValues])
 
   const t = UI[language]
@@ -315,6 +317,40 @@ export default function ChatWizard({
       setInput('')
       inputRef.current?.focus()
 
+      // ── Address candidate pick ────────────────────────────────────────────
+      if (awaitingAddressPickRef.current) {
+        awaitingAddressPickRef.current = false
+        const retypeOpts = ['None of these — let me retype', 'Ninguna — quiero escribirla']
+        const isRetype = retypeOpts.some(r => msgText.toLowerCase().includes(r.toLowerCase().slice(0, 12)))
+        if (isRetype) {
+          // Ask them to type the full address again
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: language === 'es'
+              ? 'Escribe la dirección completa:'
+              : 'Type the full address:',
+          }])
+          // Keep scriptStepIndex on property_address so next answer re-triggers normalize
+          return
+        }
+        // User picked a candidate — store and advance to confirm step
+        scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: msgText }
+        const allVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
+        const nextIdx = findNextStep(script, scriptStepIndex, allVals)
+        if (nextIdx >= script.length) {
+          setCompletedSections(prev => new Set([...prev, sectionIndex]))
+          setTimeout(() => advanceToSection(sectionIndex + 1), 600)
+        } else {
+          const nextStep = script[nextIdx]
+          const ctx = buildScriptCtx(allVals, invitation.property_address)
+          const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
+          const opts = language === 'es' ? (nextStep.optionsEs ?? nextStep.options) : nextStep.options
+          setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+          setScriptStepIndex(nextIdx)
+        }
+        return
+      }
+
       const allVals = getAllVals()
 
       let stepIdx = scriptStepIndex
@@ -344,10 +380,32 @@ export default function ChatWizard({
             body: JSON.stringify({ address: msgText }),
           })
           const data = await res.json()
-          const normalized: string = (data.normalized as string)?.trim() || msgText
-          // Replace pending address with the normalized version
+          const candidates: string[] = Array.isArray(data.candidates) ? data.candidates : []
+
+          if (candidates.length > 1) {
+            // Multiple possible matches — ask seller to pick
+            setLoading(false)
+            awaitingAddressPickRef.current = true
+            const retypeLabel = language === 'es'
+              ? 'Ninguna — quiero escribirla'
+              : 'None of these — let me retype'
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: language === 'es'
+                ? 'Encontré varias coincidencias. ¿Cuál es la dirección correcta?'
+                : 'I found a few possible matches — which is correct?',
+              options: [...candidates, retypeLabel],
+            }])
+            return
+          }
+
+          // Single candidate — normalize and continue
+          const normalized = candidates[0]?.trim() || msgText
           scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: normalized }
-        } catch { /* keep original on failure */ }
+        } catch {
+          // On failure, keep original
+          scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: msgText }
+        }
         setLoading(false)
       }
 
