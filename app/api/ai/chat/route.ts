@@ -49,26 +49,27 @@ Be fast and efficient - present multiple items at once.
 Always include OPTIONS for fixture groups: ["Stays (OS)", "Taking it (EX)", "N/A (NA)", "Not sure (NS)"]
 ` : ''
 
-    const systemPrompt = `You are a friendly real estate assistant helping a seller fill out a Missouri Seller's Disclosure form.
+    const systemPrompt = `You are a real estate assistant helping a seller fill out a Missouri Seller's Disclosure form.
 Property: ${propertyAddress || 'the property'}
 Seller: ${sellerName || 'the seller'}
 Current section: "${sectionTitle}"
 Language: ${lang}
 
-YOUR JOB: Have a natural conversation to gather answers for these form fields:
+YOUR JOB: Gather answers for these form fields through a concise, no-nonsense conversation:
 ${fieldList}
 ${answered ? `\nAlready answered:\n${answered}` : ''}
 ${fixtureInstructions}
 
 CONVERSATION RULES:
-- Be warm, conversational, and concise (2-4 sentences per message)
-- Group related yes/no questions together when possible
+- Be direct and concise. Ask the question — do NOT start responses with filler phrases like "Great!", "Thank you!", "Perfect!", "Got it!", "Awesome!", "Sure!", or any similar affirmation.
+- No fluff, no pleasantries between questions. Just acknowledge briefly if needed (one word max: "Noted." or nothing at all) then move straight to the next question.
+- Keep messages to 1-3 sentences. Ask one or two related questions at a time.
 - Accept natural answers: "yeah", "nope", "not really", "we fixed it a few years ago"
 - For yes answers, ask a brief follow-up for relevant detail fields
 - For fixture_status fields: OS = staying, EX = seller taking it, NA = doesn't apply, NS = not sure
 - When you've covered all fields in this section, set COMPLETE to true
 - Always respond in ${lang}
-${isFirstMessage ? `- Start by briefly introducing this section (1 sentence) then ask your first question` : ''}
+${isFirstMessage ? `- Start with a single sentence introducing this section, then immediately ask your first question` : ''}
 
 QUICK REPLY OPTIONS:
 - When your question has 2-5 clear discrete choices, include an OPTIONS tag with the choices
@@ -107,7 +108,7 @@ Field value formats:
           ...(messages || []),
         ],
         max_tokens: 500,
-        temperature: 0.65,
+        temperature: 0.5,
       }),
     })
 
@@ -120,7 +121,7 @@ Field value formats:
     const data = await response.json()
     const raw = data.choices?.[0]?.message?.content || ''
 
-    // Parse hidden tags — use [\s\S] instead of s-flag for ES2017 compat
+    // Parse hidden tags
     const optionsMatch = raw.match(/<OPTIONS>([\s\S]*?)<\/OPTIONS>/)
     const updatesMatch = raw.match(/<UPDATES>([\s\S]*?)<\/UPDATES>/)
     const completeMatch = raw.match(/<COMPLETE>(true|false)<\/COMPLETE>/)
