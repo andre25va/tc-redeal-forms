@@ -1,361 +1,388 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { SELLER_DISCLOSURE_FIELDS } from '@/lib/forms/seller-disclosure/fields'
-import { ArrowLeft, CheckCircle, MapPin, Save, RotateCcw } from 'lucide-react'
-import Link from 'next/link'
+import { SELLER_DISCLOSURE_FIELDS, SECTION_META } from '@/lib/forms/seller-disclosure/fields'
+import { PdfField } from '@/types'
+import { createClient } from '@supabase/supabase-js'
+import { ChevronLeft, ChevronRight, Check, X, Target, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
 
-// PDF dimensions in points (1 page, letter size)
-const PDF_WIDTH = 612
-const PDF_HEIGHT = 792
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
-// Image dimensions at 150 DPI
-const IMG_WIDTH = 1275
-const IMG_HEIGHT = 1650
+const TOTAL_PAGES = 8
+// PDF dimensions in points
+const PDF_W = 612
+const PDF_H = 792
 
-interface SavedCoord {
-  field_key: string
-  x: number
-  y: number
-  page_num: number
-  width?: number
-  height?: number
-  font_size?: number
-}
-
-const SECTION_COLORS: Record<string, string> = {
-  seller_property: '#6366f1',
-  occupancy: '#8b5cf6',
-  construction: '#ec4899',
-  land: '#f59e0b',
-  roof: '#ef4444',
-  plumbing: '#3b82f6',
-  hvac: '#14b8a6',
-  electrical: '#f97316',
-  tax_hoa: '#84cc16',
-  utilities: '#06b6d4',
-  electronics: '#a855f7',
-  fixtures: '#10b981',
-  final: '#6b7280',
-  signatures: '#1d4ed8',
+const FIELD_TYPE_COLORS: Record<string, string> = {
+  text:           '#3b82f6',
+  textarea:       '#8b5cf6',
+  choice:         '#10b981',
+  checkbox:       '#f59e0b',
+  fixture_status: '#ef4444',
+  date:           '#06b6d4',
+  signature:      '#ec4899',
 }
 
 export default function MapperPage() {
-  const [activeField, setActiveField] = useState<string | null>(null)
-  const [coordinates, setCoordinates] = useState<Record<string, SavedCoord>>({})
-  const [saving, setSaving] = useState<string | null>(null)
-  const [savedMsg, setSavedMsg] = useState(false)
-  const [filter, setFilter] = useState<string>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [coordinates, setCoordinates] = useState<Record<string, { x: number; y: number }>>({})
+  const [selectedField, setSelectedField] = useState<string | null>(null)
+  const [sectionFilter, setSectionFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'mapped' | 'unmapped'>('all')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [zoom, setZoom] = useState(1)
   const imgRef = useRef<HTMLImageElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
-  // Load existing coordinates
+  const pageFields = SELLER_DISCLOSURE_FIELDS.filter(f => f.page === currentPage)
+  const allSections = Array.from(new Set(SELLER_DISCLOSURE_FIELDS.map(f => f.section)))
+
+  // Load saved coordinates from Supabase
   useEffect(() => {
-    fetch('/api/mapper/coordinates?form_slug=seller-disclosure')
-      .then(r => r.json())
-      .then(data => {
-        const map: Record<string, SavedCoord> = {}
-        for (const c of data.coordinates || []) map[c.field_key] = c
+    async function loadCoords() {
+      const { data } = await supabase
+        .from('field_coordinates')
+        .select('field_key, x, y')
+      if (data) {
+        const map: Record<string, { x: number; y: number }> = {}
+        data.forEach((row: { field_key: string; x: number; y: number }) => {
+          map[row.field_key] = { x: row.x, y: row.y }
+        })
         setCoordinates(map)
-      })
+      }
+    }
+    loadCoords()
   }, [])
 
-  const handleImageClick = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
-    if (!activeField || !imgRef.current) return
-    const rect = imgRef.current.getBoundingClientRect()
-    const clickX = e.clientX - rect.left
-    const clickY = e.clientY - rect.top
+  // Auto-select first unmapped field on page when switching pages
+  useEffect(() => {
+    const firstUnmapped = pageFields.find(f => !coordinates[f.key])
+    if (firstUnmapped) setSelectedField(firstUnmapped.key)
+    else if (pageFields.length > 0) setSelectedField(pageFields[0].key)
+  }, [currentPage]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Convert display coords → PDF point coords
-    const xPdf = clickX * (PDF_WIDTH / rect.width)
-    const yPdf = (rect.height - clickY) * (PDF_HEIGHT / rect.height)
+  const saveCoordinate = useCallback(async (key: string, x: number, y: number) => {
+    setSaving(true)
+    const { error } = await supabase
+      .from('field_coordinates')
+      .upsert({ field_key: key, x, y, form_slug: 'seller-disclosure' }, { onConflict: 'field_key' })
 
-    setSaving(activeField)
-    try {
-      const field = SELLER_DISCLOSURE_FIELDS.find(f => f.key === activeField)
-      const res = await fetch('/api/mapper/coordinates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          form_slug: 'seller-disclosure',
-          field_key: activeField,
-          page_num: 1,
-          x: Math.round(xPdf * 10) / 10,
-          y: Math.round(yPdf * 10) / 10,
-          width: field?.width,
-          height: field?.height,
-          font_size: field?.fontSize,
-        }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setCoordinates(prev => ({ ...prev, [activeField]: data.coordinate }))
-        setSavedMsg(true)
-        setTimeout(() => setSavedMsg(false), 1500)
-        // Auto-advance to next unmapped field
-        const fields = SELLER_DISCLOSURE_FIELDS
-        const idx = fields.findIndex(f => f.key === activeField)
-        const next = fields.slice(idx + 1).find(f => !coordinates[f.key])
-        if (next) setActiveField(next.key)
-      }
-    } finally {
-      setSaving(null)
+    if (!error) {
+      setCoordinates(prev => ({ ...prev, [key]: { x, y } }))
+      setMessage(`✓ Saved ${key}`)
+      setTimeout(() => setMessage(''), 2000)
+    } else {
+      setMessage(`✗ Error: ${error.message}`)
     }
-  }, [activeField, coordinates])
+    setSaving(false)
+  }, [])
 
-  const resetField = async (fieldKey: string) => {
-    await fetch('/api/mapper/coordinates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        form_slug: 'seller-disclosure',
-        field_key: fieldKey,
-        page_num: 1,
-        x: 0, y: 0,
-      }),
-    })
+  const handleImageClick = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
+    if (!selectedField || !imgRef.current) return
+    const rect = imgRef.current.getBoundingClientRect()
+    const scaleX = PDF_W / rect.width
+    const scaleY = PDF_H / rect.height
+    const x = Math.round((e.clientX - rect.left) * scaleX)
+    const y = Math.round((e.clientY - rect.top) * scaleY)
+    saveCoordinate(selectedField, x, y)
+
+    // Auto-advance to next unmapped field on same page
+    const currentIndex = pageFields.findIndex(f => f.key === selectedField)
+    const nextField = pageFields.slice(currentIndex + 1).find(f => !coordinates[f.key])
+    if (nextField) setSelectedField(nextField.key)
+  }, [selectedField, pageFields, coordinates, saveCoordinate])
+
+  const resetField = async (key: string) => {
+    await supabase.from('field_coordinates').delete().eq('field_key', key)
     setCoordinates(prev => {
       const next = { ...prev }
-      delete next[fieldKey]
+      delete next[key]
       return next
     })
+    setSelectedField(key)
   }
 
-  const sections = [...new Set(SELLER_DISCLOSURE_FIELDS.map(f => f.section || 'other'))]
-  const filteredFields = filter === 'all'
-    ? SELLER_DISCLOSURE_FIELDS
-    : filter === 'unmapped'
-    ? SELLER_DISCLOSURE_FIELDS.filter(f => !coordinates[f.key] || (coordinates[f.key].x === 0 && coordinates[f.key].y === 0))
-    : SELLER_DISCLOSURE_FIELDS.filter(f => f.section === filter)
+  // Stats
+  const totalFields = SELLER_DISCLOSURE_FIELDS.length
+  const mappedFields = Object.keys(coordinates).length
+  const pageFieldCount = pageFields.length
+  const pageMappedCount = pageFields.filter(f => coordinates[f.key]).length
 
-  const mapped = SELLER_DISCLOSURE_FIELDS.filter(f => coordinates[f.key] && (coordinates[f.key].x !== 0 || coordinates[f.key].y !== 0))
-  const total = SELLER_DISCLOSURE_FIELDS.length
-  const progress = Math.round((mapped.length / total) * 100)
+  // Filtered fields for sidebar
+  const filteredFields = pageFields.filter(f => {
+    const matchSection = sectionFilter === 'all' || f.section === sectionFilter
+    const matchStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'mapped' && coordinates[f.key]) ||
+      (statusFilter === 'unmapped' && !coordinates[f.key])
+    return matchSection && matchStatus
+  })
+
+  // Overlay dots: only show current page's mapped fields
+  const overlayDots = pageFields.filter(f => coordinates[f.key])
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
-      {/* Top bar */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          <Link href="/admin" className="text-gray-400 hover:text-white flex items-center gap-2 text-sm">
-            <ArrowLeft className="w-4 h-4" /> Admin
-          </Link>
-          <div className="w-px h-5 bg-gray-700" />
-          <div className="flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-indigo-400" />
-            <span className="font-semibold text-sm">PDF Field Mapper</span>
-            <span className="text-gray-500 text-xs">— Seller Disclosure Addendum</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          {savedMsg && (
-            <span className="text-green-400 text-sm flex items-center gap-1">
-              <CheckCircle className="w-3.5 h-3.5" /> Saved
-            </span>
-          )}
-          <div className="text-sm text-gray-400">
-            <span className="text-white font-bold">{mapped.length}</span>/{total} fields mapped
-          </div>
-          <div className="w-32 bg-gray-800 rounded-full h-2">
-            <div
-              className="h-2 rounded-full bg-indigo-500 transition-all"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="text-xs text-gray-400">{progress}%</span>
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar — field list */}
-        <aside className="w-72 bg-gray-900 border-r border-gray-800 flex flex-col overflow-hidden">
-          {/* Filter tabs */}
-          <div className="px-3 pt-3 pb-2 space-y-2 border-b border-gray-800">
-            <p className="text-xs text-gray-500 uppercase tracking-wide font-medium px-1">Fields</p>
-            <div className="flex gap-1 flex-wrap">
-              {['all', 'unmapped'].map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
-                    filter === f ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-                >
-                  {f === 'all' ? `All (${total})` : `Unmapped (${total - mapped.length})`}
-                </button>
-              ))}
-              {sections.map(s => (
-                <button
-                  key={s}
-                  onClick={() => setFilter(s)}
-                  className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
-                    filter === s ? 'text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-                  style={filter === s ? { backgroundColor: SECTION_COLORS[s] || '#6366f1' } : {}}
-                >
-                  {s.replace(/_/g, ' ')}
-                </button>
-              ))}
+    <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-80 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
+        {/* Header */}
+        <div className="p-4 border-b border-gray-800">
+          <h1 className="text-base font-bold text-white mb-1">PDF Field Mapper</h1>
+          <p className="text-xs text-gray-400">Seller Disclosure Addendum</p>
+          <div className="mt-3 bg-gray-800 rounded-lg p-2.5">
+            <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+              <span>Overall Progress</span>
+              <span className="font-mono">{mappedFields}/{totalFields}</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div
+                className="bg-emerald-500 h-1.5 rounded-full transition-all"
+                style={{ width: `${(mappedFields / totalFields) * 100}%` }}
+              />
             </div>
           </div>
+        </div>
 
-          {/* Field list */}
-          <div className="flex-1 overflow-y-auto py-2">
-            {filteredFields.map(field => {
-              const coord = coordinates[field.key]
-              const isMapped = coord && (coord.x !== 0 || coord.y !== 0)
-              const isActive = activeField === field.key
-              const color = SECTION_COLORS[field.section || 'other'] || '#6366f1'
-
+        {/* Page Navigation */}
+        <div className="p-3 border-b border-gray-800">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Page</p>
+          <div className="grid grid-cols-4 gap-1.5">
+            {Array.from({ length: TOTAL_PAGES }, (_, i) => i + 1).map(p => {
+              const pFields = SELLER_DISCLOSURE_FIELDS.filter(f => f.page === p)
+              const pMapped = pFields.filter(f => coordinates[f.key]).length
+              const done = pMapped === pFields.length && pFields.length > 0
               return (
-                <div
-                  key={field.key}
-                  onClick={() => setActiveField(isActive ? null : field.key)}
-                  className={`mx-2 mb-1 rounded-lg px-3 py-2 cursor-pointer transition-all ${
-                    isActive
-                      ? 'ring-2 ring-indigo-500 bg-indigo-950'
-                      : 'hover:bg-gray-800'
+                <button
+                  key={p}
+                  onClick={() => setCurrentPage(p)}
+                  className={`relative py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    p === currentPage
+                      ? 'bg-indigo-600 text-white'
+                      : done
+                      ? 'bg-emerald-900 text-emerald-300 border border-emerald-700'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-2 min-w-0">
-                      <span
-                        className="mt-0.5 w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: isMapped ? color : '#374151' }}
-                      />
-                      <div className="min-w-0">
-                        <p className={`text-xs font-medium leading-tight ${isActive ? 'text-white' : 'text-gray-300'}`}>
-                          {field.label}
-                        </p>
-                        <p className="text-xs text-gray-600 mt-0.5">{field.type}</p>
-                        {isMapped && (
-                          <p className="text-xs text-gray-500 mt-0.5 font-mono">
-                            ({coord.x.toFixed(0)}, {coord.y.toFixed(0)})
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isMapped && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); resetField(field.key) }}
-                          title="Reset position"
-                          className="text-gray-600 hover:text-red-400 p-0.5"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                        </button>
-                      )}
-                      {saving === field.key && (
-                        <div className="w-3 h-3 border border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                      )}
-                      {isMapped && saving !== field.key && (
-                        <CheckCircle className="w-3 h-3 text-green-500" />
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  P{p}
+                  {pMapped > 0 && !done && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-500 rounded-full text-[8px] flex items-center justify-center font-bold">
+                      {pMapped}
+                    </span>
+                  )}
+                  {done && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full flex items-center justify-center">
+                      <Check className="w-2 h-2 text-white" />
+                    </span>
+                  )}
+                </button>
               )
             })}
           </div>
-        </aside>
+          <p className="text-xs text-gray-500 mt-2 text-center">
+            Page {currentPage}: {pageMappedCount}/{pageFieldCount} mapped
+          </p>
+        </div>
 
-        {/* Main — PDF canvas */}
-        <main className="flex-1 overflow-auto bg-gray-950 flex flex-col items-center py-8 px-6">
-          {activeField ? (
-            <div className="mb-4 bg-indigo-900/50 border border-indigo-700 rounded-xl px-5 py-3 flex items-center gap-3 max-w-2xl w-full">
-              <MapPin className="w-4 h-4 text-indigo-400 shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-indigo-200">
-                  Click on the PDF to place: <span className="text-white">{SELLER_DISCLOSURE_FIELDS.find(f => f.key === activeField)?.label}</span>
-                </p>
-                <p className="text-xs text-indigo-400 mt-0.5">Type: {SELLER_DISCLOSURE_FIELDS.find(f => f.key === activeField)?.type}</p>
-              </div>
-              <button onClick={() => setActiveField(null)} className="ml-auto text-indigo-400 hover:text-white text-xs">Cancel</button>
-            </div>
-          ) : (
-            <div className="mb-4 bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 flex items-center gap-3 max-w-2xl w-full">
-              <Save className="w-4 h-4 text-gray-500 shrink-0" />
-              <p className="text-sm text-gray-400">
-                Select a field from the sidebar, then click its position on the PDF below.
-              </p>
-            </div>
+        {/* Filters */}
+        <div className="p-3 border-b border-gray-800 space-y-2">
+          <select
+            value={sectionFilter}
+            onChange={e => setSectionFilter(e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg text-xs text-gray-200 px-2 py-1.5 focus:outline-none focus:border-indigo-500"
+          >
+            <option value="all">All Sections</option>
+            {allSections.map(s => (
+              <option key={s} value={s}>
+                {SECTION_META[s]?.title || s}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-1">
+            {(['all', 'unmapped', 'mapped'] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setStatusFilter(f)}
+                className={`flex-1 py-1 rounded-lg text-xs font-medium transition-all capitalize ${
+                  statusFilter === f
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Field List */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {filteredFields.map(field => {
+            const mapped = !!coordinates[field.key]
+            const isSelected = selectedField === field.key
+            const color = FIELD_TYPE_COLORS[field.type] || '#6b7280'
+            return (
+              <button
+                key={field.key}
+                onClick={() => setSelectedField(field.key)}
+                className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${
+                  isSelected
+                    ? 'bg-indigo-900 border-indigo-500 shadow-lg shadow-indigo-900/50'
+                    : mapped
+                    ? 'bg-gray-800/50 border-gray-700/50 hover:bg-gray-800 hover:border-gray-600'
+                    : 'bg-gray-800/30 border-transparent hover:bg-gray-800 hover:border-gray-700'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: color + '33', color }}>
+                    {field.type === 'fixture_status' ? 'FIX' : field.type.slice(0, 3).toUpperCase()}
+                  </span>
+                  <span className={`text-xs flex-1 truncate font-medium ${isSelected ? 'text-white' : 'text-gray-300'}`}>
+                    {field.label}
+                  </span>
+                  {mapped ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] font-mono text-emerald-400">
+                        {coordinates[field.key].x},{coordinates[field.key].y}
+                      </span>
+                      <button
+                        onClick={e => { e.stopPropagation(); resetField(field.key) }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-400 transition-all"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0" />
+                  )}
+                </div>
+              </button>
+            )
+          })}
+          {filteredFields.length === 0 && (
+            <div className="text-center text-gray-500 text-xs py-8">No fields match filters</div>
           )}
+        </div>
 
-          {/* PDF Image with dots */}
-          <div className="relative inline-block shadow-2xl">
+        {/* Selected Field Info */}
+        {selectedField && (
+          <div className="p-3 border-t border-gray-800 bg-gray-900">
+            <div className="bg-indigo-950 rounded-xl p-3 border border-indigo-800">
+              <p className="text-xs font-bold text-indigo-300 mb-0.5 flex items-center gap-1">
+                <Target className="w-3 h-3" /> Click PDF to place
+              </p>
+              <p className="text-xs text-white font-medium truncate">
+                {SELLER_DISCLOSURE_FIELDS.find(f => f.key === selectedField)?.label}
+              </p>
+              <p className="text-[10px] text-indigo-400 font-mono mt-0.5">{selectedField}</p>
+              {coordinates[selectedField] && (
+                <p className="text-[10px] text-emerald-400 mt-1">
+                  ✓ Mapped at ({coordinates[selectedField].x}, {coordinates[selectedField].y})
+                </p>
+              )}
+            </div>
+            {saving && <p className="text-xs text-amber-400 text-center mt-2">Saving...</p>}
+            {message && <p className="text-xs text-emerald-400 text-center mt-2">{message}</p>}
+          </div>
+        )}
+      </div>
+
+      {/* PDF Viewer */}
+      <div className="flex-1 flex flex-col bg-gray-950 overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-40 transition-all"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-sm font-semibold text-white">Page {currentPage} / {TOTAL_PAGES}</span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(TOTAL_PAGES, p + 1))}
+              disabled={currentPage === TOTAL_PAGES}
+              className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-40 transition-all"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700">
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <span className="text-xs text-gray-400 font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700">
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button onClick={() => setZoom(1)} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 ml-1">
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex items-center gap-3 text-xs">
+            {Object.entries(FIELD_TYPE_COLORS).slice(0, 4).map(([type, color]) => (
+              <span key={type} className="flex items-center gap-1 text-gray-400">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                {type === 'fixture_status' ? 'fixture' : type}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* PDF Image + Overlay */}
+        <div ref={containerRef} className="flex-1 overflow-auto flex items-start justify-center p-6">
+          <div className="relative inline-block" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               ref={imgRef}
-              src="/templates/seller-disclosure/page-1.png"
-              alt="Seller Disclosure PDF"
-              className={`max-w-2xl w-full block ${activeField ? 'cursor-crosshair' : 'cursor-default'}`}
+              src={`/pdf-pages/seller-disclosure/page-${currentPage}.png`}
+              alt={`Page ${currentPage}`}
               onClick={handleImageClick}
-              style={{ maxWidth: '800px' }}
+              className="block shadow-2xl cursor-crosshair"
+              style={{ maxWidth: '700px', width: '100%' }}
+              draggable={false}
             />
 
-            {/* Overlaid dots for placed fields */}
-            {SELLER_DISCLOSURE_FIELDS.map(field => {
+            {/* Coordinate dots */}
+            {overlayDots.map(field => {
               const coord = coordinates[field.key]
-              if (!coord || (coord.x === 0 && coord.y === 0)) return null
-              const color = SECTION_COLORS[field.section || 'other'] || '#6366f1'
-              const isActive = activeField === field.key
-
+              if (!coord || !imgRef.current) return null
+              const imgEl = imgRef.current
+              const scaleX = imgEl.clientWidth / PDF_W
+              const scaleY = imgEl.clientHeight / PDF_H
+              const left = coord.x * scaleX
+              const top = coord.y * scaleY
+              const color = FIELD_TYPE_COLORS[field.type] || '#6b7280'
+              const isSelected = field.key === selectedField
               return (
-                <FieldDot
+                <button
                   key={field.key}
-                  field={field}
-                  coord={coord}
-                  color={color}
-                  isActive={isActive}
-                  imgRef={imgRef}
-                />
+                  onClick={e => { e.stopPropagation(); setSelectedField(field.key) }}
+                  className="absolute group"
+                  style={{ left: left - 6, top: top - 6, zIndex: isSelected ? 20 : 10 }}
+                  title={field.label}
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full border-2 transition-all ${
+                      isSelected ? 'scale-150 border-white shadow-lg' : 'border-white/60 hover:scale-125'
+                    }`}
+                    style={{ backgroundColor: color }}
+                  />
+                  {isSelected && (
+                    <div className="absolute left-5 top-0 bg-gray-900 text-white text-[10px] font-mono px-2 py-1 rounded-lg whitespace-nowrap shadow-xl border border-gray-700 z-30">
+                      {field.key}<br />
+                      <span className="text-emerald-400">{coord.x}, {coord.y}</span>
+                    </div>
+                  )}
+                </button>
               )
             })}
           </div>
-
-          <p className="text-xs text-gray-600 mt-4">
-            PDF dimensions: {PDF_WIDTH} × {PDF_HEIGHT} pts · Image: {IMG_WIDTH} × {IMG_HEIGHT} px · 150 DPI
-          </p>
-        </main>
+        </div>
       </div>
-    </div>
-  )
-}
-
-function FieldDot({ field, coord, color, isActive, imgRef }: {
-  field: { key: string; label: string }
-  coord: SavedCoord
-  color: string
-  isActive: boolean
-  imgRef: React.RefObject<HTMLImageElement>
-}) {
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-
-  useEffect(() => {
-    const update = () => {
-      if (!imgRef.current) return
-      const rect = imgRef.current.getBoundingClientRect()
-      const containerRect = imgRef.current.parentElement?.getBoundingClientRect()
-      if (!containerRect) return
-      const left = coord.x * (rect.width / PDF_WIDTH) + (rect.left - containerRect.left)
-      const top = (PDF_HEIGHT - coord.y) * (rect.height / PDF_HEIGHT) + (rect.top - containerRect.top)
-      setPos({ left, top })
-    }
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [coord, imgRef])
-
-  if (!pos) return null
-
-  return (
-    <div
-      className="absolute pointer-events-none"
-      style={{ left: pos.left, top: pos.top, transform: 'translate(-50%, -50%)' }}
-    >
-      <div
-        title={field.label}
-        className={`rounded-full flex items-center justify-center text-white font-bold transition-all ${isActive ? 'w-5 h-5 ring-2 ring-white' : 'w-3 h-3'}`}
-        style={{ backgroundColor: color }}
-      />
     </div>
   )
 }

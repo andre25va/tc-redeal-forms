@@ -1,4 +1,4 @@
-export type PdfFieldType = 'text' | 'textarea' | 'choice' | 'date' | 'signature' | 'fixture_status'
+export type PdfFieldType = 'text' | 'textarea' | 'choice' | 'date' | 'signature' | 'fixture_status' | 'checkbox'
 
 export interface PdfField {
   key: string

@@ -19,20 +19,28 @@ interface FormWizardProps {
 }
 
 const SECTION_ICONS: Record<string, string> = {
+  header:        '🏠',
   seller_property: '👤',
-  occupancy: '🏠',
-  construction: '🏗️',
-  land: '🌍',
-  roof: '🏚️',
-  plumbing: '🚿',
-  hvac: '❄️',
-  electrical: '⚡',
-  tax_hoa: '📋',
-  utilities: '🔌',
-  electronics: '📡',
-  fixtures: '🔧',
-  final: '📝',
-  signatures: '✍️',
+  occupancy:     '👤',
+  construction:  '🏗️',
+  land:          '🌍',
+  roof:          '🏚️',
+  infestation:   '🐛',
+  structural:    '🧱',
+  additions:     '🔨',
+  plumbing:      '🚿',
+  hvac:          '🌡️',
+  electrical:    '⚡',
+  hazardous:     '☢️',
+  taxes_hoa:     '🏛️',
+  tax_hoa:       '🏛️',
+  inspections:   '🔍',
+  other_matters: '📋',
+  utilities:     '💡',
+  electronics:   '📡',
+  fixtures:      '🛋️',
+  final:         '📝',
+  signatures:    '✍️',
 }
 
 export default function FormWizard({ sections, token, initialData, invitation, isDemo }: FormWizardProps) {
@@ -107,7 +115,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
   }
 
   const renderField = (field: PdfField) => {
-    const value = (formData[field.key] as string) || ''
+    const value = (formData[field.key] as string) ?? ''
 
     if (field.type === 'fixture_status') {
       return (
@@ -132,6 +140,31 @@ export default function FormWizard({ sections, token, initialData, invitation, i
       )
     }
 
+    if (field.type === 'checkbox') {
+      const checked = formData[field.key] === true || formData[field.key] === 'true'
+      return (
+        <div key={field.key} className="flex items-center gap-3 py-2">
+          <button
+            type="button"
+            onClick={() => setFieldValue(field.key, !checked)}
+            className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+              checked
+                ? 'bg-indigo-600 border-indigo-600'
+                : 'bg-white border-gray-300 hover:border-indigo-400'
+            }`}
+          >
+            {checked && <CheckCircle className="w-3 h-3 text-white" />}
+          </button>
+          <label
+            onClick={() => setFieldValue(field.key, !checked)}
+            className="text-sm text-gray-700 cursor-pointer select-none"
+          >
+            {field.label}
+          </label>
+        </div>
+      )
+    }
+
     if (field.type === 'signature') {
       return (
         <SignatureField
@@ -150,9 +183,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
           <textarea
             value={value}
             onChange={e => setFieldValue(field.key, e.target.value)}
-            rows={4}
+            rows={3}
             className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50 placeholder-gray-400 transition"
-            placeholder={`Enter details...`}
+            placeholder="Enter details..."
           />
         </div>
       )
@@ -199,7 +232,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             </a>
           )}
           {isDemo && (
-            <a href="/admin" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-medium mt-4">
+            <a href="/admin" className="block mt-4 text-indigo-600 hover:text-indigo-700 font-medium text-sm">
               ← Back to Dashboard
             </a>
           )}
@@ -307,7 +340,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
 
             <div className="space-y-3">
               {sections.map(section => {
-                const filledFields = section.fields.filter(f => formData[f.key])
+                const filledFields = section.fields.filter(f => formData[f.key] && formData[f.key] !== false)
                 if (filledFields.length === 0) return null
                 return (
                   <div key={section.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -323,7 +356,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                         <div key={field.key} className="flex text-sm gap-3">
                           <span className="text-gray-400 w-44 shrink-0 text-xs pt-0.5">{field.label}</span>
                           <span className="text-gray-900 font-medium text-xs">
-                            {String(formData[field.key] || '').slice(0, 80)}
+                            {field.type === 'checkbox'
+                              ? (formData[field.key] ? '✓ Yes' : '—')
+                              : String(formData[field.key] || '').slice(0, 80)}
                           </span>
                         </div>
                       ))}
