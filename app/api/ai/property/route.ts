@@ -18,17 +18,25 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: 'system',
-            content: `You are a real estate data assistant. Given a US property address, return what you know about it from your training data.
+            content: `You are a real estate data assistant. Given a US property address, provide your best estimate of its details.
+
+Use everything you know: neighborhood build eras, city zoning history, typical construction periods for that zip code, and any specific knowledge about that address.
+
+If you cannot confirm the exact year built, provide a RANGE estimate (e.g. 1960-1975) based on the neighborhood and area. Do NOT return null for yearBuilt unless the address is completely unrecognizable as a US location.
+
+For yearBuilt: return the midpoint of your estimated range as a single integer (e.g. if you think 1960-1975, return 1967).
 
 Return ONLY a valid JSON object — no explanation, no markdown, just raw JSON:
 {
   "yearBuilt": number or null,
   "propertyType": "Single Family" | "Condo" | "Townhouse" | "Multi-Family" | "Other" | null,
   "hoa": "yes" | "no" | "unknown",
-  "confidence": "high" | "medium" | "low"
+  "confidence": "high" | "medium" | "low",
+  "estimated": true | false
 }
 
-If you don't know the property at all, still return the JSON with nulls and confidence "low".
+Set estimated: true when you are inferring from neighborhood patterns rather than confirmed records.
+Set confidence: "low" if you are purely guessing with no neighborhood knowledge.
 Never return anything except the JSON object.`,
           },
           {
@@ -36,8 +44,8 @@ Never return anything except the JSON object.`,
             content: `Property address: ${address}`,
           },
         ],
-        max_tokens: 150,
-        temperature: 0.1,
+        max_tokens: 200,
+        temperature: 0.2,
       }),
     })
 

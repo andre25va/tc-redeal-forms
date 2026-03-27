@@ -23,6 +23,7 @@ interface PropertyData {
   propertyType: string | null
   hoa: 'yes' | 'no' | 'unknown'
   confidence: 'high' | 'medium' | 'low'
+  estimated?: boolean
 }
 
 interface ChatWizardProps {
@@ -55,7 +56,6 @@ export default function ChatWizard({
   const [loading, setLoading] = useState(false)
   const [completedSections, setCompletedSections] = useState<Set<number>>(new Set())
   const [scriptStepIndex, setScriptStepIndex] = useState(0)
-  // Multi-select state: tracks which chips are toggled on for the current multi-select step
   const [multiSelectItems, setMultiSelectItems] = useState<Set<string>>(new Set())
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -177,29 +177,50 @@ export default function ChatWizard({
       })
       const data: PropertyData = await res.json()
       if (!res.ok || (data as { error?: string }).error) {
+        // Lookup failed — show friendly message then continue
+        setMessages(prev => [
+          ...prev.slice(0, -1),
+          {
+            role: 'assistant',
+            content: language === 'es'
+              ? "No pude encontrar datos automáticos para esta propiedad. Te haré algunas preguntas."
+              : "I couldn't find property data automatically. I'll ask you a few questions instead.",
+          },
+        ])
         afterPropertyCardRef.current = null
-        onDone()
+        setTimeout(() => onDone(), 1200)
         return
       }
 
       const items: string[] = []
       if (data.yearBuilt) {
         const age = new Date().getFullYear() - data.yearBuilt
-        items.push(`🏗️ Built: **${data.yearBuilt}** (~${age} yrs old)`)
+        const estimateNote = data.estimated ? ' (estimated)' : ''
+        items.push(`🏗️ Built: **${data.yearBuilt}**${estimateNote} (~${age} yrs old)`)
       }
       if (data.propertyType) items.push(`🏠 Type: **${data.propertyType}**`)
       if (data.hoa !== 'unknown') items.push(`🏘️ HOA: **${data.hoa === 'yes' ? 'Yes' : 'No'}**`)
 
       if (items.length === 0) {
+        // No useful data — show friendly message then continue
+        setMessages(prev => [
+          ...prev.slice(0, -1),
+          {
+            role: 'assistant',
+            content: language === 'es'
+              ? "No encontré datos específicos para esta dirección. Te preguntaré los detalles."
+              : "I couldn't find specific data for this address. I'll ask you the details.",
+          },
+        ])
         afterPropertyCardRef.current = null
-        onDone()
+        setTimeout(() => onDone(), 1200)
         return
       }
 
-      const confidenceNote = data.confidence === 'low'
+      const confidenceNote = data.confidence === 'low' || data.estimated
         ? (language === 'es'
-          ? '\n\n_Esto es una estimación — confirme por favor._'
-          : '\n\n_This is an estimate — please confirm._')
+          ? '\n\n_Esta es una estimación — confirme o corrija por favor._'
+          : '\n\n_This is an estimate — please confirm or correct._')
         : ''
 
       const msg = language === 'es'
@@ -219,8 +240,18 @@ export default function ChatWizard({
         },
       ])
     } catch {
+      // Network error — show friendly message then continue
+      setMessages(prev => [
+        ...prev.slice(0, -1),
+        {
+          role: 'assistant',
+          content: language === 'es'
+            ? "No pude conectarme para buscar datos. Continuemos."
+            : "Couldn't connect for property data. Let's continue.",
+        },
+      ])
       afterPropertyCardRef.current = null
-      onDone()
+      setTimeout(() => onDone(), 1200)
     }
   }, [language])
 
@@ -705,7 +736,6 @@ export default function ChatWizard({
                   <div className="flex flex-wrap gap-2 mt-3 ml-10">
                     {msg.options.map((opt, oi) => {
                       if (msg.multiSelect) {
-                        // ── Multi-select: toggleable chips ──────────────────
                         const isSelected = multiSelectItems.has(opt)
                         return (
                           <button
@@ -726,7 +756,6 @@ export default function ChatWizard({
                           </button>
                         )
                       }
-                      // ── Single-select: tap to send immediately ──────────
                       return (
                         <button
                           key={oi}
@@ -739,7 +768,6 @@ export default function ChatWizard({
                       )
                     })}
 
-                    {/* Multi-select action buttons */}
                     {msg.multiSelect && (
                       <div className="w-full flex gap-2 mt-2">
                         <button
