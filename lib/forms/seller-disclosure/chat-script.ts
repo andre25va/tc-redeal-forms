@@ -76,12 +76,48 @@ export const HEADER_SCRIPT: ScriptStep[] = [
       seller_2_name: `${(vals['_s2_name'] as string) || ''}, ${answer}`,
     }),
   },
+  // ── Address: stored as temp until confirmed ──────────────────────────────
   {
     id: 'property_address',
     question: () => 'What is the property address?',
     questionEs: () => '¿Cuál es la dirección de la propiedad?',
-    fieldKey: 'property_address',
+    tempKey: '_pending_address',
     freeText: true,
+  },
+  {
+    id: 'address_confirm',
+    question: (ctx) =>
+      `Just to confirm — is this the right address?\n\n📍 **${ctx.address || ''}**`,
+    questionEs: (ctx) =>
+      `Solo para confirmar — ¿es esta la dirección correcta?\n\n📍 **${ctx.address || ''}**`,
+    tempKey: '_addr_confirmed',
+    options: ["Yes, that's correct ✓", 'Let me fix it'],
+    optionsEs: ['Sí, es correcto ✓', 'Necesito corregirlo'],
+    skipIf: (vals) => !vals['_pending_address'],
+    onAnswer: (answer, vals) => {
+      const needsFix =
+        /fix|correct|wrong|incorrecto|corregir/i.test(answer)
+      if (needsFix) {
+        return { _pending_address: '', _addr_confirmed: 'fix' }
+      }
+      // Confirmed — commit to form
+      return {
+        property_address: (vals['_pending_address'] as string) || '',
+        _addr_confirmed: 'yes',
+      }
+    },
+  },
+  {
+    id: 'property_address_fix',
+    question: () => 'What is the correct address?',
+    questionEs: () => '¿Cuál es la dirección correcta?',
+    tempKey: '_pending_address',
+    freeText: true,
+    skipIf: (vals) => vals['_addr_confirmed'] !== 'fix',
+    onAnswer: (answer) => ({
+      property_address: answer,
+      _addr_confirmed: 'yes',
+    }),
   },
 ]
 
@@ -179,7 +215,11 @@ export function buildScriptCtx(
   return {
     s1name: (vals['_s1_name'] as string) || undefined,
     s2name: (vals['_s2_name'] as string) || undefined,
+    // Show pending address in confirm question, fall back to committed address
     address:
-      (vals['property_address'] as string) || fallbackAddress || undefined,
+      (vals['_pending_address'] as string) ||
+      (vals['property_address'] as string) ||
+      fallbackAddress ||
+      undefined,
   }
 }
