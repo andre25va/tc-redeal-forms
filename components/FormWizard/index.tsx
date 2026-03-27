@@ -1,10 +1,11 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { FormSection, PdfField } from '@/types'
 import ChoiceField from '@/components/fields/ChoiceField'
 import FixtureStatusField from '@/components/fields/FixtureStatusField'
 import SignatureField from '@/components/fields/SignatureField'
-import { CheckCircle, ChevronRight, ChevronLeft, Home, Clock } from 'lucide-react'
+import { CheckCircle, ChevronRight, ChevronLeft, Home, Clock, HelpCircle, X } from 'lucide-react'
+import { Language, UI, SECTION_TITLES } from '@/lib/i18n/translations'
 
 interface FormWizardProps {
   sections: FormSection[]
@@ -43,6 +44,134 @@ const SECTION_ICONS: Record<string, string> = {
   signatures:    '✍️',
 }
 
+// ── Help Tooltip Component ────────────────────────────────────────────────────
+function HelpTooltip({
+  fieldLabel,
+  sectionTitle,
+  language,
+  t,
+}: {
+  fieldLabel: string
+  sectionTitle: string
+  language: Language
+  t: typeof UI['en']
+}) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [explanation, setExplanation] = useState('')
+  const [error, setError] = useState(false)
+  // Cache per language so we don't re-fetch on language change if already loaded
+  const cache = useRef<Record<string, string>>({})
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return }
+    setOpen(true)
+    const cacheKey = `${language}:${fieldLabel}`
+    if (cache.current[cacheKey]) {
+      setExplanation(cache.current[cacheKey])
+      return
+    }
+    setLoading(true)
+    setError(false)
+    setExplanation('')
+    try {
+      const res = await fetch('/api/ai/help', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fieldLabel, sectionTitle, language }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.explanation) throw new Error()
+      cache.current[cacheKey] = data.explanation
+      setExplanation(data.explanation)
+    } catch {
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={toggle}
+        className="ml-1.5 text-indigo-400 hover:text-indigo-600 transition-colors align-middle"
+        aria-label={t.helpButtonLabel}
+        title={t.helpButtonLabel}
+      >
+        <HelpCircle className="w-3.5 h-3.5 inline" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 left-0 top-6 w-72 bg-white border border-indigo-100 rounded-2xl shadow-xl p-4">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">
+              {t.helpButtonLabel}
+            </span>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-gray-300 hover:text-gray-500 transition-colors shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <div className="w-3 h-3 border border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              {t.helpLoading}
+            </div>
+          )}
+          {error && !loading && (
+            <p className="text-xs text-red-500">{t.helpError}</p>
+          )}
+          {explanation && !loading && (
+            <p className="text-xs text-gray-700 leading-relaxed">{explanation}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Language Toggle ───────────────────────────────────────────────────────────
+function LanguageToggle({
+  language,
+  onChange,
+}: {
+  language: Language
+  onChange: (lang: Language) => void
+}) {
+  return (
+    <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+      <button
+        type="button"
+        onClick={() => onChange('en')}
+        className={`px-2 py-1 rounded-md text-xs font-semibold transition-all ${
+          language === 'en'
+            ? 'bg-white text-gray-900 shadow-sm'
+            : 'text-gray-500 hover:text-gray-700'
+        }`}
+      >
+        🇺🇸 EN
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('es')}
+        className={`px-2 py-1 rounded-md text-xs font-semibold transition-all ${
+          language === 'es'
+            ? 'bg-white text-gray-900 shadow-sm'
+            : 'text-gray-500 hover:text-gray-700'
+        }`}
+      >
+        🇲🇽 ES
+      </button>
+    </div>
+  )
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 export default function FormWizard({ sections, token, initialData, invitation, isDemo }: FormWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [formData, setFormData] = useState<Record<string, unknown>>(initialData)
@@ -52,11 +181,20 @@ export default function FormWizard({ sections, token, initialData, invitation, i
   const [pdfUrl, setPdfUrl] = useState('')
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [error, setError] = useState('')
+  const [language, setLanguage] = useState<Language>('en')
+
+  const t = UI[language]
 
   const totalSteps = sections.length + 1
   const isReviewStep = currentStep === sections.length
   const currentSection = !isReviewStep ? sections[currentStep] : null
   const progress = Math.round((currentStep / totalSteps) * 100)
+
+  const getSectionTitle = (id: string, fallback: string) => {
+    const entry = SECTION_TITLES[id]
+    if (!entry) return fallback
+    return language === 'es' ? entry.es : entry.en
+  }
 
   const setFieldValue = (key: string, value: unknown) => {
     setFormData(prev => ({ ...prev, [key]: value }))
@@ -91,10 +229,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
   }
 
   const handleSubmit = async () => {
-    if (isDemo) {
-      setSubmitted(true)
-      return
-    }
+    if (isDemo) { setSubmitted(true); return }
     setSubmitting(true)
     setError('')
     try {
@@ -114,6 +249,27 @@ export default function FormWizard({ sections, token, initialData, invitation, i
     }
   }
 
+  // ── Field Label with help button ──────────────────────────────────────────
+  const FieldLabel = ({ field }: { field: PdfField }) => {
+    const sectionTitle = currentSection
+      ? getSectionTitle(currentSection.id, currentSection.title)
+      : ''
+    const showHelp = !['checkbox', 'signature', 'fixture_status'].includes(field.type)
+    return (
+      <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+        {field.label}
+        {showHelp && (
+          <HelpTooltip
+            fieldLabel={field.label}
+            sectionTitle={sectionTitle}
+            language={language}
+            t={t}
+          />
+        )}
+      </label>
+    )
+  }
+
   const renderField = (field: PdfField) => {
     const value = (formData[field.key] as string) ?? ''
 
@@ -130,13 +286,23 @@ export default function FormWizard({ sections, token, initialData, invitation, i
 
     if (field.type === 'choice') {
       return (
-        <ChoiceField
-          key={field.key}
-          label={field.label}
-          value={value}
-          onChange={v => setFieldValue(field.key, v)}
-          choices={field.choices || []}
-        />
+        <div key={field.key} className="mb-4">
+          <div className="flex items-center gap-1 mb-1.5">
+            <span className="block text-sm font-semibold text-gray-700">{field.label}</span>
+            <HelpTooltip
+              fieldLabel={field.label}
+              sectionTitle={currentSection ? getSectionTitle(currentSection.id, currentSection.title) : ''}
+              language={language}
+              t={t}
+            />
+          </div>
+          <ChoiceField
+            label=""
+            value={value}
+            onChange={v => setFieldValue(field.key, v)}
+            choices={field.choices || []}
+          />
+        </div>
       )
     }
 
@@ -179,13 +345,13 @@ export default function FormWizard({ sections, token, initialData, invitation, i
     if (field.type === 'textarea') {
       return (
         <div key={field.key} className="mb-5">
-          <label className="block text-sm font-semibold text-gray-700 mb-1.5">{field.label}</label>
+          <FieldLabel field={field} />
           <textarea
             value={value}
             onChange={e => setFieldValue(field.key, e.target.value)}
             rows={3}
             className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50 placeholder-gray-400 transition"
-            placeholder="Enter details..."
+            placeholder={t.enterDetails}
           />
         </div>
       )
@@ -193,18 +359,19 @@ export default function FormWizard({ sections, token, initialData, invitation, i
 
     return (
       <div key={field.key} className="mb-5">
-        <label className="block text-sm font-semibold text-gray-700 mb-1.5">{field.label}</label>
+        <FieldLabel field={field} />
         <input
           type={field.type === 'date' ? 'date' : 'text'}
           value={value}
           onChange={e => setFieldValue(field.key, e.target.value)}
           className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 placeholder-gray-400 transition"
-          placeholder={field.type !== 'date' ? `Enter ${field.label.toLowerCase()}...` : undefined}
+          placeholder={field.type !== 'date' ? t.enter(field.label) : undefined}
         />
       </div>
     )
   }
 
+  // ── Submitted Screen ──────────────────────────────────────────────────────
   if (submitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
@@ -213,13 +380,10 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             <CheckCircle className="w-12 h-12 text-green-500" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-3">
-            {isDemo ? 'Demo Complete!' : 'Form Submitted!'}
+            {isDemo ? t.demoCompleteTitle : t.submittedTitle}
           </h1>
           <p className="text-gray-500 mb-8 leading-relaxed">
-            {isDemo
-              ? 'This was a preview of the Seller Disclosure form. In the real form, a filled PDF would be emailed to all parties.'
-              : 'Your Seller Disclosure Addendum has been submitted. Copies have been emailed to all parties.'
-            }
+            {isDemo ? t.demoCompleteBody : t.submittedBody}
           </p>
           {pdfUrl && (
             <a
@@ -228,12 +392,12 @@ export default function FormWizard({ sections, token, initialData, invitation, i
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-7 rounded-xl transition-colors shadow-md shadow-indigo-200"
             >
-              Download Your PDF
+              {t.downloadPdf}
             </a>
           )}
           {isDemo && (
             <a href="/admin" className="block mt-4 text-indigo-600 hover:text-indigo-700 font-medium text-sm">
-              ← Back to Dashboard
+              {t.backToDashboard}
             </a>
           )}
         </div>
@@ -241,6 +405,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
     )
   }
 
+  // ── Main Form ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
@@ -252,29 +417,32 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                 <Home className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-gray-900 text-sm leading-tight">Seller Disclosure Addendum</h1>
-                <p className="text-xs text-gray-400 truncate max-w-[200px]">
-                  {invitation.property_address || invitation.seller_name || 'Property Form'}
+                <h1 className="font-bold text-gray-900 text-sm leading-tight">{t.formTitle}</h1>
+                <p className="text-xs text-gray-400 truncate max-w-[160px]">
+                  {invitation.property_address || invitation.seller_name || t.propertyForm}
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <div className="flex items-center gap-1 justify-end text-xs text-gray-400 mb-0.5">
-                {saving ? (
-                  <>
-                    <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
-                    Saving...
-                  </>
-                ) : lastSaved ? (
-                  <>
-                    <Clock className="w-3 h-3" />
-                    Saved {lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </>
-                ) : null}
+            <div className="flex items-center gap-3">
+              <LanguageToggle language={language} onChange={setLanguage} />
+              <div className="text-right">
+                <div className="flex items-center gap-1 justify-end text-xs text-gray-400 mb-0.5">
+                  {saving ? (
+                    <>
+                      <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                      {t.saving}
+                    </>
+                  ) : lastSaved ? (
+                    <>
+                      <Clock className="w-3 h-3" />
+                      {t.savedAt(lastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
+                    </>
+                  ) : null}
+                </div>
+                <p className="text-xs font-semibold text-gray-600">
+                  {t.stepOf(currentStep + 1, totalSteps)}
+                </p>
               </div>
-              <p className="text-xs font-semibold text-gray-600">
-                Step {currentStep + 1} of {totalSteps}
-              </p>
             </div>
           </div>
           {/* Progress bar */}
@@ -297,7 +465,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                     ? 'bg-indigo-600 w-6'
                     : 'bg-gray-200 w-1.5 cursor-default'
                 }`}
-                title={s.title}
+                title={getSectionTitle(s.id, s.title)}
               />
             ))}
             <div
@@ -316,7 +484,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             <div className="mb-6">
               <div className="flex items-center gap-3 mb-1">
                 <span className="text-2xl">{SECTION_ICONS[currentSection.id] || '📄'}</span>
-                <h2 className="text-xl font-bold text-gray-900">{currentSection.title}</h2>
+                <h2 className="text-xl font-bold text-gray-900">
+                  {getSectionTitle(currentSection.id, currentSection.title)}
+                </h2>
               </div>
               {currentSection.description && (
                 <p className="text-sm text-gray-500 ml-10">{currentSection.description}</p>
@@ -333,9 +503,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             <div className="mb-6">
               <div className="flex items-center gap-3 mb-1">
                 <span className="text-2xl">✅</span>
-                <h2 className="text-xl font-bold text-gray-900">Review & Submit</h2>
+                <h2 className="text-xl font-bold text-gray-900">{t.reviewTitle}</h2>
               </div>
-              <p className="text-sm text-gray-500 ml-10">Please review your answers before submitting.</p>
+              <p className="text-sm text-gray-500 ml-10">{t.reviewSubtitle}</p>
             </div>
 
             <div className="space-y-3">
@@ -346,9 +516,11 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                   <div key={section.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                     <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
                       <span className="text-base">{SECTION_ICONS[section.id] || '📄'}</span>
-                      <h3 className="font-semibold text-gray-900 text-sm">{section.title}</h3>
+                      <h3 className="font-semibold text-gray-900 text-sm">
+                        {getSectionTitle(section.id, section.title)}
+                      </h3>
                       <span className="ml-auto text-xs text-gray-400">
-                        {filledFields.length} field{filledFields.length !== 1 ? 's' : ''}
+                        {t.fields(filledFields.length)}
                       </span>
                     </div>
                     <div className="p-5 space-y-2">
@@ -391,12 +563,12 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             disabled={currentStep === 0}
             className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            <ChevronLeft className="w-4 h-4" /> Back
+            <ChevronLeft className="w-4 h-4" /> {t.back}
           </button>
 
           {!isReviewStep && (
             <span className="text-xs text-gray-400">
-              {currentSection?.title}
+              {currentSection ? getSectionTitle(currentSection.id, currentSection.title) : ''}
             </span>
           )}
 
@@ -407,9 +579,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
               className="flex items-center gap-2 px-7 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
             >
               {submitting ? (
-                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Submitting...</>
+                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> {t.submitting}</>
               ) : (
-                <><CheckCircle className="w-4 h-4" /> {isDemo ? 'Finish Preview' : 'Submit Form'}</>
+                <><CheckCircle className="w-4 h-4" /> {isDemo ? t.finishPreview : t.submitForm}</>
               )}
             </button>
           ) : (
@@ -421,7 +593,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
               {saving ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
-                <>Next <ChevronRight className="w-4 h-4" /></>
+                <>{t.next} <ChevronRight className="w-4 h-4" /></>
               )}
             </button>
           )}
