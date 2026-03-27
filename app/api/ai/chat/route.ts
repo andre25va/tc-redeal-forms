@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const runtime = 'edge'
 
+// Sections that are primarily yes/no scan lists — batch them
+const BATCH_SCAN_SECTIONS = [
+  'land', 'infestation', 'structural', 'hazardous',
+  'other_matters', 'additions', 'taxes_hoa', 'inspections'
+]
+
 export async function POST(req: NextRequest) {
   try {
     const {
@@ -20,11 +26,22 @@ export async function POST(req: NextRequest) {
     }
 
     const lang = language === 'es' ? 'Spanish' : 'English'
+    const isBatchSection = BATCH_SCAN_SECTIONS.includes(sectionKey)
+    const isFixtures = sectionKey === 'fixtures'
     const isFirstMessage = !messages || messages.length === 0
 
-    const fieldList = (fields as Array<{
-      key: string; type: string; label: string; choices?: string[]
-    }>)
+    type FieldDef = { key: string; type: string; label: string; choices?: string[] }
+    const allFields = fields as FieldDef[]
+
+    // Separate yes/no choice fields from detail/text fields
+    const choiceFields = allFields.filter(f =>
+      f.type === 'choice' && (f.choices?.includes('yes') || f.choices?.includes('no'))
+    )
+    const detailFields = allFields.filter(f =>
+      f.type !== 'choice' || (!f.choices?.includes('yes') && !f.choices?.includes('no'))
+    )
+
+    const fieldList = allFields
       .filter(f => f.type !== 'signature')
       .map(f => {
         let desc = `- ${f.key} (${f.type}): "${f.label}"`
@@ -33,67 +50,94 @@ export async function POST(req: NextRequest) {
       })
       .join('\n')
 
-    const answered = (fields as Array<{ key: string; label: string }>)
+    const answered = allFields
       .filter(f => formValues?.[f.key] !== undefined && formValues[f.key] !== '' && formValues[f.key] !== null)
       .map(f => `  ${f.key}: ${JSON.stringify(formValues[f.key])}`)
       .join('\n')
 
-    const isFixtures = sectionKey === 'fixtures'
+    // Build the batch scan list for yes/no sections
+    const batchList = isBatchSection && choiceFields.length > 0
+      ? choiceFields
+          .filter(f => !formValues?.[f.key]) // skip already answered
+          .map((f, i) => `  ${i + 1}. ${f.label.replace(/^\d+[a-z]?\s*[–-]\s*/i, '')} [key: ${f.key}]`)
+          .join('\n')
+      : ''
+
+    const batchOptions = isBatchSection && choiceFields.length > 0
+      ? choiceFields
+          .filter(f => !formValues?.[f.key])
+          .map(f => f.label.replace(/^\d+[a-z]?\s*[–-]\s*/i, '').replace(/\s*\([^)]+\)\s*$/, '').trim())
+          .slice(0, 10) // cap chips at 10
+      : []
 
     const fixtureInstructions = isFixtures ? `
 SPECIAL INSTRUCTIONS FOR FIXTURES SECTION:
-This section is a long list of items. Present them in groups of 5-7 at a time.
-For each item ask if it: Stays with the house (OS), Seller is taking it (EX), Not applicable/don't have it (NA), or Not sure (NS).
-Group logically: kitchen appliances together, outdoor items together, etc.
-Be fast and efficient - present multiple items at once.
-Always include OPTIONS for fixture groups: ["Stays (OS)", "Taking it (EX)", "N/A (NA)", "Not sure (NS)"]
+This section is a long list of items. Present them in groups of 6-8 at a time.
+For each group ask what happens to each: Stays with the house (OS), Seller taking it (EX), Not applicable (NA), or Not sure (NS).
+Group logically: kitchen appliances, outdoor items, entertainment, etc.
+Always include OPTIONS: ["Stays (OS)", "Taking it (EX)", "N/A", "Not sure"]
+` : ''
+
+    const batchInstructions = isBatchSection && isFirstMessage && batchList ? `
+SPECIAL INSTRUCTIONS FOR THIS SECTION — BATCH SCAN MODE:
+This section has ${choiceFields.length} yes/no questions. DO NOT ask them one by one.
+
+INSTEAD, on your FIRST message:
+1. Say: "For [section name], tap anything that applies — or say None if none do."
+2. Show the full list as a numbered checklist (clean short labels, no form codes)
+3. Include OPTIONS tag with each item as a short chip label PLUS "None of these" at the end
+
+When the user taps an item or says which ones apply:
+- Ask ONLY the follow-up detail questions for the items they flagged (dates, descriptions, etc.)
+- Auto-set all un-flagged yes/no fields to "no" in your UPDATES tag
+- Be concise — just get the details you need for flagged items
+
+When user says "None of these" or "None":
+- Set ALL yes/no fields in this section to "no" in UPDATES
+- Set COMPLETE to true immediately
+
+The goal: one scan question → user taps what applies → quick drill-down → done.
 ` : ''
 
     const systemPrompt = `You are a real estate assistant helping a seller fill out a Missouri Seller's Disclosure form.
 Property: ${propertyAddress || 'the property'}
 Seller: ${sellerName || 'the seller'}
-Current section: "${sectionTitle}"
+Current section: "${sectionTitle}" (key: ${sectionKey})
 Language: ${lang}
 
-YOUR JOB: Gather answers for these form fields through a concise, no-nonsense conversation:
+FORM FIELDS TO COLLECT:
 ${fieldList}
 ${answered ? `\nAlready answered:\n${answered}` : ''}
+${batchInstructions}
 ${fixtureInstructions}
 
 CONVERSATION RULES:
-- Be direct and concise. Ask the question — do NOT start responses with filler phrases like "Great!", "Thank you!", "Perfect!", "Got it!", "Awesome!", "Sure!", or any similar affirmation.
-- No fluff, no pleasantries between questions. Just acknowledge briefly if needed (one word max: "Noted." or nothing at all) then move straight to the next question.
-- Keep messages to 1-3 sentences. Ask one or two related questions at a time.
+- Be direct. NO filler phrases: never say "Great!", "Thank you!", "Perfect!", "Got it!", "Awesome!", "Sure!", "Of course!"
+- No pleasantries between questions. One word acknowledgement max ("Noted.") then next question.
+- Keep messages to 1-3 sentences max. Ask one thing at a time unless doing a batch scan.
 - Accept natural answers: "yeah", "nope", "not really", "we fixed it a few years ago"
-- For yes answers, ask a brief follow-up for relevant detail fields
-- For fixture_status fields: OS = staying, EX = seller taking it, NA = doesn't apply, NS = not sure
-- When you've covered all fields in this section, set COMPLETE to true
+- When you've covered all fields, set COMPLETE to true
 - Always respond in ${lang}
-${isFirstMessage ? `- Start with a single sentence introducing this section, then immediately ask your first question` : ''}
 
 QUICK REPLY OPTIONS:
-- When your question has 2-5 clear discrete choices, include an OPTIONS tag with the choices
-- Examples of when to use OPTIONS:
-  * Yes/No questions -> ["Yes", "No"]
-  * Yes/No/Not Sure -> ["Yes", "No", "Not sure"]
-  * Seller identity -> ["Seller 1", "Seller 2", "Both sellers"]
-  * Fixture status -> ["Stays (OS)", "Taking it (EX)", "N/A", "Not sure"]
-  * Known choice fields -> use the actual option labels
-- For open-ended questions (dates, names, dollar amounts, descriptions) do NOT include OPTIONS
-- OPTIONS appear as tappable buttons the user can tap instead of typing
+- When question has 2-10 clear discrete choices, include OPTIONS tag
+- For yes/no: ["Yes", "No"] or ["Yes", "No", "Not sure"]
+- For seller identity: ["Seller 1", "Seller 2", "Both sellers"]
+- For batch scan: list each item as a short chip + "None of these" at end
+- For open-ended (dates, names, amounts, descriptions): NO OPTIONS
 
-RESPONSE FORMAT - You MUST include these tags at the END of every response:
-<OPTIONS>["option1", "option2"]</OPTIONS>  <- include only when discrete choices apply, otherwise omit
+RESPONSE FORMAT — include these tags at END of every response:
+<OPTIONS>["option1", "option2"]</OPTIONS>  (only when discrete choices apply)
 <UPDATES>{"fieldKey": "value"}</UPDATES>
 <COMPLETE>true|false</COMPLETE>
 
 Field value formats:
-- choice (yes/no/na): use exactly "yes", "no", or "na"
-- fixture_status: use exactly "OS", "EX", "NA", or "NS"  
-- checkbox: use true or false
-- text/textarea/date: use the string value
-- Only include fields you're confident about from THIS message exchange
-- Empty object {} is fine if no new fields were answered`
+- choice yes/no/na: use exactly "yes", "no", or "na"
+- fixture_status: use exactly "OS", "EX", "NA", or "NS"
+- checkbox: true or false
+- text/textarea/date: string value
+- For batch scan "None of these": set ALL yes/no fields in section to "no" in UPDATES
+- Only include fields you're confident about — empty object {} is fine`
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -107,8 +151,8 @@ Field value formats:
           { role: 'system', content: systemPrompt },
           ...(messages || []),
         ],
-        max_tokens: 500,
-        temperature: 0.5,
+        max_tokens: 600,
+        temperature: 0.4,
       }),
     })
 
@@ -142,6 +186,11 @@ Field value formats:
     } catch { /* ignore */ }
 
     if (completeMatch?.[1] === 'true') sectionComplete = true
+
+    // If no options from AI but it's first message of a batch section, inject them
+    if (!options.length && isBatchSection && isFirstMessage && batchOptions.length > 0) {
+      options = [...batchOptions, 'None of these']
+    }
 
     const message = raw
       .replace(/<OPTIONS>[\s\S]*?<\/OPTIONS>/g, '')
