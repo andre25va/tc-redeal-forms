@@ -1,6 +1,46 @@
 export type Language = 'en' | 'es'
 
-export const UI = {
+export interface UIStrings {
+  formTitle: string
+  propertyForm: string
+  saving: string
+  savedAt: (time: string) => string
+  stepOf: (current: number, total: number) => string
+  back: string
+  next: string
+  submitForm: string
+  submitting: string
+  finishPreview: string
+  reviewTitle: string
+  reviewSubtitle: string
+  fields: (n: number) => string
+  enterDetails: string
+  enter: (label: string) => string
+  alreadySubmittedTitle: string
+  alreadySubmittedBody: string
+  submittedTitle: string
+  submittedBody: string
+  demoCompleteTitle: string
+  demoCompleteBody: string
+  downloadPdf: string
+  backToDashboard: string
+  expiredTitle: string
+  expiredBody: string
+  notFoundTitle: string
+  notFoundBody: string
+  helpButtonLabel: string
+  helpLoading: string
+  helpError: string
+  languageLabel: string
+  yes: string
+  no: string
+  na: string
+  os: string
+  ex: string
+  ns: string
+}
+
+export const UI: Record<Language, UIStrings> = {
   en: {
     formTitle: 'Seller Disclosure Addendum',
     propertyForm: 'Property Form',
@@ -79,7 +119,7 @@ export const UI = {
     ex: 'Excluido',
     ns: 'No sé',
   },
-} as const
+}
 
 export const SECTION_TITLES: Record<string, { en: string; es: string }> = {
   header:        { en: 'Seller & Property',            es: 'Vendedor y Propiedad' },
