@@ -8,6 +8,14 @@ interface ChatMessage {
   role: 'assistant' | 'user'
   content: string
   options?: string[]
+  isPropertyCard?: boolean
+}
+
+interface PropertyData {
+  yearBuilt: number | null
+  propertyType: string | null
+  hoa: 'yes' | 'no' | 'unknown'
+  confidence: 'high' | 'medium' | 'low'
 }
 
 interface ChatWizardProps {
@@ -42,6 +50,8 @@ export default function ChatWizard({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initializedRef = useRef(false)
+  const propertyLookupDoneRef = useRef(false)
+  const pendingPropertyDataRef = useRef<PropertyData | null>(null)
   const t = UI[language]
 
   const currentSection = chatSections[sectionIndex]
@@ -50,10 +60,7 @@ export default function ChatWizard({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-  // Resolve the best known property address:
-  // 1. What the seller typed into the form (property_address field)
-  // 2. What was pre-filled on the invitation link
-  // 3. Generic fallback
+  // Resolve the best known property address
   const resolvedAddress = useCallback(() => {
     return (
       (formValues?.property_address as string) ||
@@ -62,6 +69,62 @@ export default function ChatWizard({
       'the property'
     )
   }, [formValues, invitation.property_address])
+
+  // ── Property lookup: fires once when property_address is first set ──────────
+  useEffect(() => {
+    const address = formValues?.property_address as string
+    if (!address || propertyLookupDoneRef.current) return
+    propertyLookupDoneRef.current = true
+
+    // Small delay so the address entry message appears first
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/ai/property', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address }),
+        })
+        const data: PropertyData = await res.json()
+        if (!res.ok || (data as { error?: string }).error) return
+
+        // Build the card items
+        const items: string[] = []
+        if (data.yearBuilt) {
+          const age = new Date().getFullYear() - data.yearBuilt
+          items.push(`🏗️ Built: **${data.yearBuilt}** (~${age} yrs old)`)
+        }
+        if (data.propertyType) items.push(`🏠 Type: **${data.propertyType}**`)
+        if (data.hoa !== 'unknown') items.push(`🏘️ HOA: **${data.hoa === 'yes' ? 'Yes' : 'No'}**`)
+
+        // Only show card if we have something useful
+        if (items.length === 0) return
+
+        const confidenceNote = data.confidence === 'low'
+          ? (language === 'es' ? '\n\n_Esto es una estimación — confirme por favor._' : '\n\n_This is an estimate — please confirm._')
+          : ''
+
+        const msg = language === 'es'
+          ? `Encontré información sobre esta propiedad:\n\n${items.join('\n')}${confidenceNote}\n\n¿Esto se ve correcto?`
+          : `I found some info about this property:\n\n${items.join('\n')}${confidenceNote}\n\nDoes this look right?`
+
+        pendingPropertyDataRef.current = data
+
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: msg,
+          options: language === 'es'
+            ? ['Sí, correcto ✓', 'Algo está mal']
+            : ["Yes, that's right ✓", "Something's off"],
+          isPropertyCard: true,
+        }])
+      } catch {
+        // Silent fail — property lookup is best-effort
+      }
+    }, 1200)
+
+    return () => clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formValues?.property_address])
 
   const callChat = useCallback(async (
     history: ChatMessage[],
@@ -102,7 +165,7 @@ export default function ChatWizard({
           role: 'assistant',
           content: language === 'es'
             ? 'Hola! Empecemos con el formulario. ¿Cuánto tiempo llevan en la propiedad?'
-            : "Hi! Let's get started. How long have you owned the property?",
+            : "Let's get started. How long have you owned the property?",
         }])
       })
       .finally(() => setLoading(false))
@@ -152,6 +215,51 @@ export default function ChatWizard({
     const msgText = (text ?? input).trim()
     if (!msgText || loading || !currentSection) return
 
+    // ── Handle property card confirmation ─────────────────────────────────────
+    const propertyData = pendingPropertyDataRef.current
+    if (propertyData) {
+      pendingPropertyDataRef.current = null
+      const isConfirm = /right|correct|yes|sí|si|correcto/i.test(msgText) || msgText.includes('✓')
+
+      // Clear option chips from the card
+      setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
+      setMessages(prev => [...prev, { role: 'user', content: msgText }])
+      setInput('')
+
+      if (isConfirm) {
+        // Pre-fill form fields from property data
+        if (propertyData.yearBuilt) {
+          const age = new Date().getFullYear() - propertyData.yearBuilt
+          onUpdate('occ_property_age', String(age))
+        }
+        if (propertyData.hoa === 'yes') {
+          onUpdate('tax_j', 'yes')
+          onUpdate('tax_m', 'yes')
+        } else if (propertyData.hoa === 'no') {
+          onUpdate('tax_j', 'no')
+          onUpdate('tax_m', 'no')
+        }
+
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: language === 'es'
+            ? 'Guardado. Continuemos.'
+            : 'Saved. Moving on.',
+        }])
+        return
+      } else {
+        // User wants to correct something — let normal chat flow continue
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: language === 'es'
+            ? '¿Qué necesita corregir?'
+            : 'What needs to be corrected?',
+        }])
+        return
+      }
+    }
+
+    // ── Normal chat flow ───────────────────────────────────────────────────────
     setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
 
     const userMsg: ChatMessage = { role: 'user', content: msgText }
@@ -301,11 +409,14 @@ export default function ChatWizard({
                   className={`max-w-[78%] px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
                     msg.role === 'user'
                       ? 'bg-indigo-600 text-white rounded-br-sm'
-                      : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'
+                      : msg.isPropertyCard
+                        ? 'bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 text-gray-800 rounded-bl-sm'
+                        : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'
                   }`}
                   dangerouslySetInnerHTML={{
                     __html: msg.content
                       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                      .replace(/_(.*?)_/g, '<em>$1</em>')
                       .replace(/\n/g, '<br />'),
                   }}
                 />
