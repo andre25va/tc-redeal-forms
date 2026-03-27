@@ -32,7 +32,7 @@ export default function ChatWizard({
   language,
   onLanguageChange,
 }: ChatWizardProps) {
-  const chatSections = sections.filter(s => !SKIP_SECTIONS.includes(s.key))
+  const chatSections = sections.filter(s => !SKIP_SECTIONS.includes(s.id))
   const [sectionIndex, setSectionIndex] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -58,8 +58,8 @@ export default function ChatWizard({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: history,
-        sectionKey: section.key,
-        sectionTitle: SECTION_TITLES[section.key]?.[language] ?? section.title,
+        sectionKey: section.id,
+        sectionTitle: SECTION_TITLES[section.id]?.[language] ?? section.title,
         fields: section.fields,
         formValues,
         language,
@@ -104,8 +104,8 @@ export default function ChatWizard({
     const transitionMsg: ChatMessage = {
       role: 'assistant',
       content: language === 'es'
-        ? `✅ ¡Perfecto! Pasemos a: **${SECTION_TITLES[nextSection.key]?.es ?? nextSection.title}**`
-        : `✅ Great! Moving on to: **${SECTION_TITLES[nextSection.key]?.en ?? nextSection.title}**`,
+        ? `✅ ¡Perfecto! Pasemos a: **${SECTION_TITLES[nextSection.id]?.es ?? nextSection.title}**`
+        : `✅ Great! Moving on to: **${SECTION_TITLES[nextSection.id]?.en ?? nextSection.title}**`,
     }
     setMessages(prev => [...prev, transitionMsg])
     setSectionIndex(nextIdx)
@@ -174,7 +174,7 @@ export default function ChatWizard({
     : 0
 
   const sectionTitle = currentSection
-    ? (SECTION_TITLES[currentSection.key]?.[language] ?? currentSection.title)
+    ? (SECTION_TITLES[currentSection.id]?.[language] ?? currentSection.title)
     : ''
 
   return (
@@ -229,7 +229,7 @@ export default function ChatWizard({
           const active = i === sectionIndex
           return (
             <span
-              key={s.key}
+              key={s.id}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                 done    ? 'bg-emerald-100 text-emerald-700' :
                 active  ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300' :
@@ -237,7 +237,7 @@ export default function ChatWizard({
               }`}
             >
               {done && <CheckCircle className="w-3 h-3" />}
-              {SECTION_TITLES[s.key]?.[language] ?? s.title}
+              {SECTION_TITLES[s.id]?.[language] ?? s.title}
             </span>
           )
         })}
@@ -333,3 +333,4 @@ export default function ChatWizard({
     </div>
   )
 }
+
