@@ -50,6 +50,19 @@ export default function ChatWizard({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
+  // Resolve the best known property address:
+  // 1. What the seller typed into the form (property_address field)
+  // 2. What was pre-filled on the invitation link
+  // 3. Generic fallback
+  const resolvedAddress = useCallback(() => {
+    return (
+      (formValues?.property_address as string) ||
+      (formValues?.['seller_property_address'] as string) ||
+      invitation.property_address ||
+      'the property'
+    )
+  }, [formValues, invitation.property_address])
+
   const callChat = useCallback(async (
     history: ChatMessage[],
     section: FormSection,
@@ -66,12 +79,12 @@ export default function ChatWizard({
         formValues,
         language,
         sellerName: invitation.seller_name,
-        propertyAddress: invitation.property_address,
+        propertyAddress: resolvedAddress(),
       }),
     })
     if (!res.ok) throw new Error('API error')
     return res.json()
-  }, [formValues, language, invitation])
+  }, [formValues, language, invitation, resolvedAddress])
 
   useEffect(() => {
     if (initializedRef.current || !currentSection) return
@@ -105,8 +118,8 @@ export default function ChatWizard({
     const transitionMsg: ChatMessage = {
       role: 'assistant',
       content: language === 'es'
-        ? `✅ ¡Perfecto! Pasemos a: **${SECTION_TITLES[nextSection.id]?.es ?? nextSection.title}**`
-        : `✅ Great! Moving on to: **${SECTION_TITLES[nextSection.id]?.en ?? nextSection.title}**`,
+        ? `✅ Pasemos a: **${SECTION_TITLES[nextSection.id]?.es ?? nextSection.title}**`
+        : `✅ Moving on to: **${SECTION_TITLES[nextSection.id]?.en ?? nextSection.title}**`,
     }
     setMessages(prev => [...prev, transitionMsg])
     setSectionIndex(nextIdx)
