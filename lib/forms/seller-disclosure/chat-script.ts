@@ -26,6 +26,8 @@ export interface ScriptStep {
   skipIf?: (vals: Record<string, unknown>) => boolean
   /** After collecting the answer, return extra field updates to apply */
   onAnswer?: (answer: string, vals: Record<string, unknown>) => Record<string, unknown>
+  /** Multi-select: user toggles chips, then taps Continue to submit all at once */
+  multiSelect?: boolean
 }
 
 // ── HEADER: Seller names + marital status + property address ─────────────────
@@ -95,13 +97,10 @@ export const HEADER_SCRIPT: ScriptStep[] = [
     optionsEs: ['Sí, es correcto ✓', 'Necesito corregirlo'],
     skipIf: (vals) => !vals['_pending_address'],
     onAnswer: (answer, vals) => {
-      // Check specifically for fix phrases — NOT general words like "correct"
-      const needsFix =
-        /let me fix|fix it|necesito corregir/i.test(answer)
+      const needsFix = /let me fix|fix it|necesito corregir/i.test(answer)
       if (needsFix) {
         return { _pending_address: '', _addr_confirmed: 'fix' }
       }
-      // Confirmed — commit to form
       return {
         property_address: (vals['_pending_address'] as string) || '',
         _addr_confirmed: 'yes',
@@ -132,7 +131,6 @@ export const OCCUPANCY_SCRIPT: ScriptStep[] = [
       `¿Cuál es la edad aproximada de la propiedad${address ? ` en ${address}` : ''}? (años)`,
     fieldKey: 'occ_property_age',
     freeText: true,
-    // Skip if property lookup already filled this in
     skipIf: (vals) => !!vals['occ_property_age'],
   },
   {
@@ -172,8 +170,7 @@ export const CONSTRUCTION_SCRIPT: ScriptStep[] = [
     optionsEs: ['Convencional/Madera', 'Modular', 'Fabricada', 'Móvil', 'Otro'],
     tempKey: '_const_type',
     onAnswer: (answer) => ({
-      const_conventional:
-        answer === 'Conventional/Wood Frame' || answer === 'Convencional/Madera',
+      const_conventional: answer === 'Conventional/Wood Frame' || answer === 'Convencional/Madera',
       const_modular: answer === 'Modular',
       const_manufactured: answer === 'Manufactured' || answer === 'Fabricada',
       const_mobile: answer === 'Mobile' || answer === 'Móvil',
@@ -187,6 +184,67 @@ export const CONSTRUCTION_SCRIPT: ScriptStep[] = [
     fieldKey: 'const_other',
     freeText: true,
     skipIf: (vals) => !vals['_const_is_other'],
+  },
+]
+
+// ── LAND, SOILS & BOUNDARIES ─────────────────────────────────────────────────
+const LAND_ITEM_MAP: Record<string, string> = {
+  'Fill or Expansive Soil':              'land_a',
+  'Sliding / Settling / Earth Movement': 'land_b',
+  'Flood Zone / Wetlands (FEMA)':        'land_c',
+  'Drainage or Flood Problems':          'land_d',
+  'Flood Insurance Premiums Paid':       'land_e',
+  'Need for Flood Insurance':            'land_f',
+  'Boundaries Marked':                   'land_g',
+  'Stake Survey':                        'land_h',
+  'Encroachments / Boundary Disputes':   'land_i',
+  'Fencing on Property':                 'land_j',
+  'Diseased / Dead / Damaged Trees':     'land_k',
+  'Gas/Oil Wells or Lines on Property':  'land_l',
+  'Oil/Gas Leases / Mineral Rights':     'land_m',
+}
+
+export const LAND_SCRIPT: ScriptStep[] = [
+  {
+    id: 'land_batch',
+    multiSelect: true,
+    question: () => 'For Land, Soils & Boundaries — tap everything that applies:',
+    questionEs: () => 'Para Terreno, Suelos y Límites — seleccione todo lo que aplique:',
+    options: Object.keys(LAND_ITEM_MAP),
+    onAnswer: (answer) => {
+      const selected = answer === 'None of these'
+        ? new Set<string>()
+        : new Set(answer.split(', '))
+      const updates: Record<string, unknown> = {}
+      Object.entries(LAND_ITEM_MAP).forEach(([label, fieldKey]) => {
+        updates[fieldKey] = selected.has(label) ? 'yes' : 'no'
+      })
+      updates['_land_has_yes'] = selected.size > 0
+      updates['_land_has_fencing'] = selected.has('Fencing on Property')
+      return updates
+    },
+  },
+  {
+    id: 'land_fencing_belongs',
+    question: () => 'Does the fencing belong to the property?',
+    questionEs: () => '¿Pertenece la cerca a la propiedad?',
+    options: ['Yes – Belongs to Property', 'No – Shared / Not Part of Property', 'N/A'],
+    optionsEs: ['Sí – Pertenece a la propiedad', 'No – Compartida / No pertenece', 'N/A'],
+    skipIf: (vals) => !vals['_land_has_fencing'],
+    onAnswer: (answer) => ({
+      land_j_belongs:
+        answer.startsWith('Yes') || answer.startsWith('Sí') ? 'yes'
+        : answer.startsWith('No') ? 'no'
+        : 'na',
+    }),
+  },
+  {
+    id: 'land_comments',
+    question: () => 'Briefly explain any items you flagged:',
+    questionEs: () => 'Explique brevemente los elementos marcados:',
+    fieldKey: 'land_comments',
+    freeText: true,
+    skipIf: (vals) => !vals['_land_has_yes'],
   },
 ]
 
@@ -278,6 +336,7 @@ export const SCRIPTED_SECTIONS: Record<string, ScriptStep[]> = {
   header: HEADER_SCRIPT,
   occupancy: OCCUPANCY_SCRIPT,
   construction: CONSTRUCTION_SCRIPT,
+  land: LAND_SCRIPT,
   roof: ROOF_SCRIPT,
 }
 
@@ -302,7 +361,6 @@ export function buildScriptCtx(
   return {
     s1name: (vals['_s1_name'] as string) || undefined,
     s2name: (vals['_s2_name'] as string) || undefined,
-    // Show pending address in confirm question, fall back to committed address
     address:
       (vals['_pending_address'] as string) ||
       (vals['property_address'] as string) ||
