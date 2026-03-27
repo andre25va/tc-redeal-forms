@@ -3,6 +3,12 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { FormSection } from '@/types'
 import { Language, UI, SECTION_TITLES } from '@/lib/i18n/translations'
 import { Send, Bot, User, CheckCircle, Globe, ChevronRight } from 'lucide-react'
+import {
+  SCRIPTED_SECTIONS,
+  findNextStep,
+  buildScriptCtx,
+  type ScriptStep,
+} from '@/lib/forms/seller-disclosure/chat-script'
 
 interface ChatMessage {
   role: 'assistant' | 'user'
@@ -47,12 +53,22 @@ export default function ChatWizard({
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [completedSections, setCompletedSections] = useState<Set<number>>(new Set())
+  // Which step within the current scripted section we're on
+  const [scriptStepIndex, setScriptStepIndex] = useState(0)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initializedRef = useRef(false)
   const propertyLookupDoneRef = useRef(false)
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
+  // Temp values for the locked script (not sent to the form directly)
+  const scriptTempValsRef = useRef<Record<string, unknown>>({})
+  // Keep a ref copy of formValues to avoid stale closures
+  const formValuesRef = useRef(formValues)
+  useEffect(() => { formValuesRef.current = formValues }, [formValues])
+
   const t = UI[language]
+  void t
 
   const currentSection = chatSections[sectionIndex]
 
@@ -60,23 +76,86 @@ export default function ChatWizard({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-  // Resolve the best known property address
+  // ── Resolved address ────────────────────────────────────────────────────────
   const resolvedAddress = useCallback(() => {
     return (
       (formValues?.property_address as string) ||
-      (formValues?.['seller_property_address'] as string) ||
       invitation.property_address ||
       'the property'
     )
   }, [formValues, invitation.property_address])
 
-  // ── Property lookup: fires once when property_address is first set ──────────
+  // ── Build context for script questions ─────────────────────────────────────
+  const getCtx = useCallback(() => {
+    return buildScriptCtx(
+      { ...formValuesRef.current, ...scriptTempValsRef.current },
+      invitation.property_address,
+    )
+  }, [invitation.property_address])
+
+  // ── Get all vals (form + temp) ──────────────────────────────────────────────
+  const getAllVals = useCallback(() => ({
+    ...formValuesRef.current,
+    ...scriptTempValsRef.current,
+  }), [])
+
+  // ── Display the first question of a scripted section ───────────────────────
+  const initScriptedSection = useCallback((
+    script: ScriptStep[],
+    append: boolean,
+  ) => {
+    const allVals = getAllVals()
+    const firstIdx = findNextStep(script, -1, allVals)
+    if (firstIdx >= script.length) return false
+    const step = script[firstIdx]
+    const ctx = getCtx()
+    const q = language === 'es' ? step.questionEs(ctx) : step.question(ctx)
+    const opts = language === 'es' ? (step.optionsEs ?? step.options) : step.options
+    const msg: ChatMessage = { role: 'assistant', content: q, options: opts }
+    if (append) {
+      setMessages(prev => [...prev, msg])
+    } else {
+      setMessages([msg])
+    }
+    setScriptStepIndex(firstIdx)
+    return true
+  }, [getAllVals, getCtx, language])
+
+  // ── AI call helper ──────────────────────────────────────────────────────────
+  const callChat = useCallback(async (
+    history: ChatMessage[],
+    section: FormSection,
+  ) => {
+    const apiHistory = history.map(({ role, content }) => ({ role, content }))
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: apiHistory,
+        sectionKey: section.id,
+        sectionTitle: SECTION_TITLES[section.id]?.[language] ?? section.title,
+        fields: section.fields,
+        formValues: formValuesRef.current,
+        language,
+        sellerName: invitation.seller_name,
+        propertyAddress: resolvedAddress(),
+      }),
+    })
+    if (!res.ok) throw new Error('API error')
+    return res.json() as Promise<{
+      message: string
+      fieldUpdates: Record<string, unknown>
+      sectionComplete: boolean
+      options: string[]
+    }>
+  }, [language, invitation, resolvedAddress])
+
+  // ── Property data lookup (fires once after address is entered) ──────────────
   useEffect(() => {
     const address = formValues?.property_address as string
     if (!address || propertyLookupDoneRef.current) return
     propertyLookupDoneRef.current = true
 
-    // Small delay so the address entry message appears first
     const timer = setTimeout(async () => {
       try {
         const res = await fetch('/api/ai/property', {
@@ -87,7 +166,6 @@ export default function ChatWizard({
         const data: PropertyData = await res.json()
         if (!res.ok || (data as { error?: string }).error) return
 
-        // Build the card items
         const items: string[] = []
         if (data.yearBuilt) {
           const age = new Date().getFullYear() - data.yearBuilt
@@ -95,8 +173,6 @@ export default function ChatWizard({
         }
         if (data.propertyType) items.push(`🏠 Type: **${data.propertyType}**`)
         if (data.hoa !== 'unknown') items.push(`🏘️ HOA: **${data.hoa === 'yes' ? 'Yes' : 'No'}**`)
-
-        // Only show card if we have something useful
         if (items.length === 0) return
 
         const confidenceNote = data.confidence === 'low'
@@ -108,7 +184,6 @@ export default function ChatWizard({
           : `I found some info about this property:\n\n${items.join('\n')}${confidenceNote}\n\nDoes this look right?`
 
         pendingPropertyDataRef.current = data
-
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: msg,
@@ -117,62 +192,44 @@ export default function ChatWizard({
             : ["Yes, that's right ✓", "Something's off"],
           isPropertyCard: true,
         }])
-      } catch {
-        // Silent fail — property lookup is best-effort
-      }
+      } catch { /* silent */ }
     }, 1200)
 
     return () => clearTimeout(timer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formValues?.property_address])
 
-  const callChat = useCallback(async (
-    history: ChatMessage[],
-    section: FormSection,
-  ): Promise<{ message: string; fieldUpdates: Record<string, unknown>; sectionComplete: boolean; options: string[] }> => {
-    const apiHistory = history.map(({ role, content }) => ({ role, content }))
-    const res = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: apiHistory,
-        sectionKey: section.id,
-        sectionTitle: SECTION_TITLES[section.id]?.[language] ?? section.title,
-        fields: section.fields,
-        formValues,
-        language,
-        sellerName: invitation.seller_name,
-        propertyAddress: resolvedAddress(),
-      }),
-    })
-    if (!res.ok) throw new Error('API error')
-    return res.json()
-  }, [formValues, language, invitation, resolvedAddress])
-
+  // ── Initialize first section on mount ───────────────────────────────────────
   useEffect(() => {
     if (initializedRef.current || !currentSection) return
     initializedRef.current = true
-    setLoading(true)
-    callChat([], currentSection)
-      .then(data => {
-        setMessages([{ role: 'assistant', content: data.message, options: data.options?.length ? data.options : undefined }])
-        if (data.fieldUpdates) {
-          Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
-        }
-      })
-      .catch(() => {
-        setMessages([{
-          role: 'assistant',
-          content: language === 'es'
-            ? 'Hola! Empecemos con el formulario. ¿Cuánto tiempo llevan en la propiedad?'
-            : "Let's get started. How long have you owned the property?",
-        }])
-      })
-      .finally(() => setLoading(false))
+
+    const script = SCRIPTED_SECTIONS[currentSection.id]
+    if (script) {
+      initScriptedSection(script, false)
+    } else {
+      setLoading(true)
+      callChat([], currentSection)
+        .then(data => {
+          setMessages([{
+            role: 'assistant',
+            content: data.message,
+            options: data.options?.length ? data.options : undefined,
+          }])
+          if (data.fieldUpdates) {
+            Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
+          }
+        })
+        .catch(() => {
+          setMessages([{ role: 'assistant', content: language === 'es' ? 'Empecemos.' : "Let's get started." }])
+        })
+        .finally(() => setLoading(false))
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const advanceToSection = useCallback(async (nextIdx: number, currentHistory: ChatMessage[]) => {
+  // ── Advance to next section ──────────────────────────────────────────────────
+  const advanceToSection = useCallback(async (nextIdx: number) => {
     if (nextIdx >= chatSections.length) {
       onComplete()
       return
@@ -186,48 +243,55 @@ export default function ChatWizard({
     }
     setMessages(prev => [...prev, transitionMsg])
     setSectionIndex(nextIdx)
-    setLoading(true)
-    try {
-      const data = await callChat([], nextSection)
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: data.message,
-        options: data.options?.length ? data.options : undefined,
-      }])
-      if (data.fieldUpdates) {
-        Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
-      }
-      if (data.sectionComplete) {
-        setCompletedSections(prev => new Set([...prev, nextIdx]))
-        await advanceToSection(nextIdx + 1, [])
-      }
-    } catch {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: language === 'es' ? 'Tuve un problema. Por favor intenta de nuevo.' : 'I had a connection issue. Please try again.',
-      }])
-    } finally {
-      setLoading(false)
-    }
-  }, [chatSections, language, callChat, onUpdate, onComplete])
+    setScriptStepIndex(0)
 
+    const script = SCRIPTED_SECTIONS[nextSection.id]
+    if (script) {
+      // Small delay so transition message is visible
+      setTimeout(() => initScriptedSection(script, true), 300)
+    } else {
+      setLoading(true)
+      try {
+        const data = await callChat([], nextSection)
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: data.message,
+          options: data.options?.length ? data.options : undefined,
+        }])
+        if (data.fieldUpdates) {
+          Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
+        }
+        if (data.sectionComplete) {
+          setCompletedSections(prev => new Set([...prev, nextIdx]))
+          advanceToSection(nextIdx + 1)
+        }
+      } catch {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: language === 'es'
+            ? 'Tuve un problema. Por favor intenta de nuevo.'
+            : 'I had a connection issue. Please try again.',
+        }])
+      } finally {
+        setLoading(false)
+      }
+    }
+  }, [chatSections, language, callChat, onUpdate, onComplete, initScriptedSection])
+
+  // ── Send a message (script mode or AI mode) ─────────────────────────────────
   const sendMessage = useCallback(async (text?: string) => {
     const msgText = (text ?? input).trim()
     if (!msgText || loading || !currentSection) return
 
-    // ── Handle property card confirmation ─────────────────────────────────────
+    // ── Handle property card confirmation ──────────────────────────────────
     const propertyData = pendingPropertyDataRef.current
     if (propertyData) {
       pendingPropertyDataRef.current = null
       const isConfirm = /right|correct|yes|sí|si|correcto/i.test(msgText) || msgText.includes('✓')
-
-      // Clear option chips from the card
       setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
       setMessages(prev => [...prev, { role: 'user', content: msgText }])
       setInput('')
-
       if (isConfirm) {
-        // Pre-fill form fields from property data
         if (propertyData.yearBuilt) {
           const age = new Date().getFullYear() - propertyData.yearBuilt
           onUpdate('occ_property_age', String(age))
@@ -239,29 +303,88 @@ export default function ChatWizard({
           onUpdate('tax_j', 'no')
           onUpdate('tax_m', 'no')
         }
-
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: language === 'es'
-            ? 'Guardado. Continuemos.'
-            : 'Saved. Moving on.',
+          content: language === 'es' ? 'Guardado. Continuemos.' : 'Saved. Moving on.',
         }])
-        return
       } else {
-        // User wants to correct something — let normal chat flow continue
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: language === 'es'
-            ? '¿Qué necesita corregir?'
-            : 'What needs to be corrected?',
+          content: language === 'es' ? '¿Qué necesita corregir?' : 'What needs to be corrected?',
         }])
-        return
       }
+      return
     }
 
-    // ── Normal chat flow ───────────────────────────────────────────────────────
-    setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
+    // ── Scripted section mode ──────────────────────────────────────────────
+    const script = SCRIPTED_SECTIONS[currentSection.id]
+    if (script) {
+      setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
+      setMessages(prev => [...prev, { role: 'user', content: msgText }])
+      setInput('')
+      inputRef.current?.focus()
 
+      const allVals = getAllVals()
+
+      // Re-verify the current step isn't skipped
+      let stepIdx = scriptStepIndex
+      while (stepIdx < script.length && script[stepIdx].skipIf?.(allVals)) {
+        stepIdx++
+      }
+      if (stepIdx >= script.length) {
+        setCompletedSections(prev => new Set([...prev, sectionIndex]))
+        advanceToSection(sectionIndex + 1)
+        return
+      }
+
+      const step = script[stepIdx]
+
+      // Update temp vals ref first
+      if (step.tempKey) {
+        scriptTempValsRef.current = { ...scriptTempValsRef.current, [step.tempKey]: msgText }
+      }
+
+      // Collect field updates
+      const combinedVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
+      const updates: Record<string, unknown> = {}
+      if (step.fieldKey) {
+        updates[step.fieldKey] = msgText
+      }
+      if (step.onAnswer) {
+        const extra = step.onAnswer(msgText, combinedVals)
+        Object.assign(updates, extra)
+      }
+
+      // Apply updates: non-temp keys go to form, temp keys stay in ref
+      Object.entries(updates).forEach(([k, v]) => {
+        if (k.startsWith('_')) {
+          scriptTempValsRef.current = { ...scriptTempValsRef.current, [k]: v }
+        } else {
+          onUpdate(k, v)
+        }
+      })
+
+      // Find next non-skipped step
+      const updatedAllVals = { ...combinedVals, ...updates }
+      const nextIdx = findNextStep(script, stepIdx, updatedAllVals)
+
+      if (nextIdx >= script.length) {
+        // Scripted section complete
+        setCompletedSections(prev => new Set([...prev, sectionIndex]))
+        setTimeout(() => advanceToSection(sectionIndex + 1), 600)
+      } else {
+        const nextStep = script[nextIdx]
+        const ctx = buildScriptCtx(updatedAllVals, invitation.property_address)
+        const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
+        const opts = language === 'es' ? (nextStep.optionsEs ?? nextStep.options) : nextStep.options
+        setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+        setScriptStepIndex(nextIdx)
+      }
+      return
+    }
+
+    // ── AI mode ───────────────────────────────────────────────────────────
+    setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
     const userMsg: ChatMessage = { role: 'user', content: msgText }
     setMessages(prev => [...prev, userMsg])
     setInput('')
@@ -270,12 +393,8 @@ export default function ChatWizard({
 
     try {
       const newHistory = await new Promise<ChatMessage[]>(resolve => {
-        setMessages(prev => {
-          resolve(prev)
-          return prev
-        })
+        setMessages(prev => { resolve(prev); return prev })
       })
-
       const data = await callChat(newHistory, currentSection)
       const assistantMsg: ChatMessage = {
         role: 'assistant',
@@ -283,14 +402,12 @@ export default function ChatWizard({
         options: data.options?.length ? data.options : undefined,
       }
       setMessages(prev => [...prev, assistantMsg])
-
       if (data.fieldUpdates) {
         Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
       }
-
       if (data.sectionComplete) {
         setCompletedSections(prev => new Set([...prev, sectionIndex]))
-        setTimeout(() => advanceToSection(sectionIndex + 1, [...newHistory, assistantMsg]), 800)
+        setTimeout(() => advanceToSection(sectionIndex + 1), 800)
       }
     } catch {
       setMessages(prev => [...prev, {
@@ -302,11 +419,11 @@ export default function ChatWizard({
     } finally {
       setLoading(false)
     }
-  }, [input, loading, currentSection, callChat, sectionIndex, advanceToSection, onUpdate, language])
+  }, [input, loading, currentSection, scriptStepIndex, sectionIndex, advanceToSection, onUpdate, language, callChat, getAllVals, invitation.property_address])
 
   const skipSection = () => {
     setCompletedSections(prev => new Set([...prev, sectionIndex]))
-    advanceToSection(sectionIndex + 1, messages)
+    advanceToSection(sectionIndex + 1)
   }
 
   const progress = chatSections.length > 0
@@ -317,7 +434,10 @@ export default function ChatWizard({
     ? (SECTION_TITLES[currentSection.id]?.[language] ?? currentSection.title)
     : ''
 
-  const lastAssistantIdx = messages.reduce((last, msg, i) => msg.role === 'assistant' ? i : last, -1)
+  const lastAssistantIdx = messages.reduce(
+    (last, msg, i) => (msg.role === 'assistant' ? i : last),
+    -1,
+  )
 
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-slate-50 via-indigo-50/30 to-purple-50/20 flex flex-col">
@@ -399,7 +519,9 @@ export default function ChatWizard({
         <div className="max-w-2xl mx-auto px-4 space-y-4">
           {messages.map((msg, i) => (
             <div key={i}>
-              <div className={`flex items-end gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`flex items-end gap-2.5 ${
+                msg.role === 'user' ? 'justify-end' : 'justify-start'
+              }`}>
                 {msg.role === 'assistant' && (
                   <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shrink-0 shadow-sm">
                     <Bot className="w-4 h-4 text-white" />
@@ -427,21 +549,25 @@ export default function ChatWizard({
                 )}
               </div>
 
-              {/* Quick-reply chips */}
-              {msg.role === 'assistant' && i === lastAssistantIdx && !loading && msg.options && msg.options.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3 ml-10">
-                  {msg.options.map((opt, oi) => (
-                    <button
-                      key={oi}
-                      onClick={() => sendMessage(opt)}
-                      disabled={loading}
-                      className="px-4 py-2 bg-white border-2 border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-400 active:scale-95 transition-all shadow-sm disabled:opacity-40"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Quick-reply chips — only on the last assistant message */}
+              {msg.role === 'assistant' &&
+                i === lastAssistantIdx &&
+                !loading &&
+                msg.options &&
+                msg.options.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3 ml-10">
+                    {msg.options.map((opt, oi) => (
+                      <button
+                        key={oi}
+                        onClick={() => sendMessage(opt)}
+                        disabled={loading}
+                        className="px-4 py-2 bg-white border-2 border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-400 active:scale-95 transition-all shadow-sm disabled:opacity-40"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                )}
             </div>
           ))}
 
@@ -480,7 +606,9 @@ export default function ChatWizard({
                   sendMessage()
                 }
               }}
-              placeholder={language === 'es' ? 'Escriba su respuesta...' : 'Type your answer...'}
+              placeholder={
+                language === 'es' ? 'Escriba su respuesta...' : 'Type your answer...'
+              }
               rows={1}
               disabled={loading}
               className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all disabled:opacity-60"
