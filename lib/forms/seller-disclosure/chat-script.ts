@@ -190,11 +190,95 @@ export const CONSTRUCTION_SCRIPT: ScriptStep[] = [
   },
 ]
 
+// ── ROOF ─────────────────────────────────────────────────────────────────────
+export const ROOF_SCRIPT: ScriptStep[] = [
+  {
+    id: 'roof_age',
+    question: () => 'Approximately how old is the roof? (years)',
+    questionEs: () => '¿Aproximadamente cuántos años tiene el techo? (años)',
+    fieldKey: 'roof_age',
+    freeText: true,
+  },
+  {
+    id: 'roof_type',
+    question: () => 'What type of roof is it?',
+    questionEs: () => '¿Qué tipo de techo tiene?',
+    fieldKey: 'roof_type',
+    options: ['Shingle', 'Tile', 'Flat/TPO', 'Metal', 'Shake/Wood', 'Other'],
+    optionsEs: ['Teja asfáltica', 'Teja de barro', 'Plano/TPO', 'Metal', 'Madera', 'Otro'],
+    freeText: true,
+  },
+  {
+    id: 'roof_layers',
+    question: () => 'How many layers of roofing material are there?',
+    questionEs: () => '¿Cuántas capas de material de techo hay?',
+    fieldKey: 'roof_layers',
+    options: ['1', '2', '3+', "Don't know"],
+    optionsEs: ['1', '2', '3+', 'No sé'],
+    freeText: true,
+  },
+  {
+    id: 'roof_b',
+    question: () => 'Have there been any problems with the roof, flashing, or gutters?',
+    questionEs: () => '¿Ha habido algún problema con el techo, destellos o canalones?',
+    options: ['Yes', 'No'],
+    optionsEs: ['Sí', 'No'],
+    onAnswer: (answer) => ({
+      roof_b: answer === 'Yes' || answer === 'Sí' ? 'yes' : 'no',
+      _roof_b_yes: answer === 'Yes' || answer === 'Sí',
+    }),
+  },
+  {
+    id: 'roof_b_date',
+    question: () => 'When did the roof problem occur? (date or approximate year)',
+    questionEs: () => '¿Cuándo ocurrió el problema con el techo?',
+    fieldKey: 'roof_b_date',
+    freeText: true,
+    skipIf: (vals) => !vals['_roof_b_yes'],
+  },
+  {
+    id: 'roof_c',
+    question: () => 'Have any repairs been made to the roof, flashing, or gutters?',
+    questionEs: () => '¿Se han realizado reparaciones al techo, destellos o canalones?',
+    options: ['Yes', 'No'],
+    optionsEs: ['Sí', 'No'],
+    onAnswer: (answer) => ({
+      roof_c: answer === 'Yes' || answer === 'Sí' ? 'yes' : 'no',
+      _roof_c_yes: answer === 'Yes' || answer === 'Sí',
+    }),
+  },
+  {
+    id: 'roof_c_date_company',
+    question: () => 'Who did the repairs and when? (company name and date)',
+    questionEs: () => '¿Quién hizo las reparaciones y cuándo? (nombre de empresa y fecha)',
+    fieldKey: 'roof_c_date_company',
+    freeText: true,
+    skipIf: (vals) => !vals['_roof_c_yes'],
+  },
+  {
+    id: 'roof_d',
+    question: () => 'Has the roof ever been replaced?',
+    questionEs: () => '¿Se ha reemplazado el techo alguna vez?',
+    options: ['Yes – Complete', 'Yes – Partial', 'No'],
+    optionsEs: ['Sí – Completo', 'Sí – Parcial', 'No'],
+    onAnswer: (answer) => {
+      const isComplete = answer === 'Yes – Complete' || answer === 'Sí – Completo'
+      const isPartial = answer === 'Yes – Partial' || answer === 'Sí – Parcial'
+      return {
+        roof_d: isComplete || isPartial ? 'yes' : 'no',
+        roof_d_complete: isComplete,
+        roof_d_partial: isPartial,
+      }
+    },
+  },
+]
+
 // Map of section IDs → their locked script
 export const SCRIPTED_SECTIONS: Record<string, ScriptStep[]> = {
   header: HEADER_SCRIPT,
   occupancy: OCCUPANCY_SCRIPT,
   construction: CONSTRUCTION_SCRIPT,
+  roof: ROOF_SCRIPT,
 }
 
 // Helper: find index of next non-skipped step after `currentIdx`
