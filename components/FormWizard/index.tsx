@@ -62,7 +62,6 @@ function HelpTooltip({
   const [loading, setLoading] = useState(false)
   const [explanation, setExplanation] = useState('')
   const [error, setError] = useState(false)
-  // Cache per language so we don't re-fetch on language change if already loaded
   const cache = useRef<Record<string, string>>({})
 
   const toggle = async () => {
@@ -106,7 +105,7 @@ function HelpTooltip({
       </button>
 
       {open && (
-        <div className="absolute z-50 left-0 top-6 w-72 bg-white border border-indigo-100 rounded-2xl shadow-xl p-4">
+        <div className="absolute z-50 left-0 top-6 w-64 sm:w-72 bg-white border border-indigo-100 rounded-2xl shadow-xl p-4">
           <div className="flex items-start justify-between gap-2 mb-2">
             <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">
               {t.helpButtonLabel}
@@ -146,7 +145,7 @@ function LanguageToggle({
   onChange: (lang: Language) => void
 }) {
   return (
-    <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+    <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5">
       <button
         type="button"
         onClick={() => onChange('en')}
@@ -156,7 +155,7 @@ function LanguageToggle({
             : 'text-gray-500 hover:text-gray-700'
         }`}
       >
-        🇺🇸 EN
+        EN
       </button>
       <button
         type="button"
@@ -167,7 +166,7 @@ function LanguageToggle({
             : 'text-gray-500 hover:text-gray-700'
         }`}
       >
-        🇲🇽 ES
+        ES
       </button>
     </div>
   )
@@ -356,7 +355,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             value={value}
             onChange={e => setFieldValue(field.key, e.target.value)}
             rows={3}
-            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50 placeholder-gray-400 transition"
+            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none bg-gray-50 placeholder-gray-400 transition"
             placeholder={t.enterDetails}
           />
         </div>
@@ -370,7 +369,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
           type={field.type === 'date' ? 'date' : 'text'}
           value={value}
           onChange={e => setFieldValue(field.key, e.target.value)}
-          className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 placeholder-gray-400 transition"
+          className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-gray-50 placeholder-gray-400 transition"
           placeholder={field.type !== 'date' ? t.enter(field.label) : undefined}
         />
       </div>
@@ -381,14 +380,14 @@ export default function FormWizard({ sections, token, initialData, invitation, i
   if (submitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl shadow-xl p-10 max-w-md w-full text-center border border-gray-100">
-          <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle className="w-12 h-12 text-green-500" />
+        <div className="bg-white rounded-3xl shadow-xl p-8 max-w-sm w-full text-center border border-gray-100">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
+            <CheckCircle className="w-10 h-10 text-green-500" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-3">
+          <h1 className="text-xl font-bold text-gray-900 mb-3">
             {isDemo ? t.demoCompleteTitle : t.submittedTitle}
           </h1>
-          <p className="text-gray-500 mb-8 leading-relaxed">
+          <p className="text-gray-500 mb-6 leading-relaxed text-sm">
             {isDemo ? t.demoCompleteBody : t.submittedBody}
           </p>
           {pdfUrl && (
@@ -396,7 +395,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
               href={pdfUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-7 rounded-xl transition-colors shadow-md shadow-indigo-200"
+              className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors shadow-md shadow-indigo-200"
             >
               {t.downloadPdf}
             </a>
@@ -413,25 +412,25 @@ export default function FormWizard({ sections, token, initialData, invitation, i
 
   // ── Main Form ─────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-gray-50" style={{ paddingBottom: 'max(80px, calc(80px + env(safe-area-inset-bottom)))' }}>
       {/* Header */}
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-2xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
+        <div className="max-w-2xl mx-auto px-3 sm:px-4 py-3">
+          <div className="flex items-center justify-between mb-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center shrink-0">
                 <Home className="w-4 h-4 text-white" />
               </div>
-              <div>
-                <h1 className="font-bold text-gray-900 text-sm leading-tight">{t.formTitle}</h1>
-                <p className="text-xs text-gray-400 truncate max-w-[160px]">
+              <div className="min-w-0">
+                <h1 className="font-bold text-gray-900 text-xs leading-tight truncate">{t.formTitle}</h1>
+                <p className="text-xs text-gray-400 truncate max-w-[140px] sm:max-w-[220px]">
                   {invitation.property_address || invitation.seller_name || t.propertyForm}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 shrink-0">
               <LanguageToggle language={language} onChange={setLanguage} />
-              <div className="text-right">
+              <div className="text-right hidden sm:block">
                 <div className="flex items-center gap-1 justify-end text-xs text-gray-400 mb-0.5">
                   {saving ? (
                     <>
@@ -449,6 +448,9 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                   {t.stepOf(currentStep + 1, totalSteps)}
                 </p>
               </div>
+              <p className="text-xs font-semibold text-gray-600 sm:hidden">
+                {currentStep + 1}/{totalSteps}
+              </p>
             </div>
           </div>
           {/* Progress bar */}
@@ -459,16 +461,16 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             />
           </div>
           {/* Step dots */}
-          <div className="flex gap-1 mt-2 justify-center overflow-x-auto py-0.5">
+          <div className="flex gap-1 mt-2 justify-center overflow-x-auto py-0.5" style={{ scrollbarWidth: 'none' }}>
             {sections.map((s, i) => (
               <button
                 key={s.id}
                 onClick={() => i <= currentStep && setCurrentStep(i)}
                 className={`h-1.5 rounded-full transition-all shrink-0 ${
                   i < currentStep
-                    ? 'bg-indigo-400 w-4 cursor-pointer'
+                    ? 'bg-indigo-400 w-3 cursor-pointer'
                     : i === currentStep
-                    ? 'bg-indigo-600 w-6'
+                    ? 'bg-indigo-600 w-5'
                     : 'bg-gray-200 w-1.5 cursor-default'
                 }`}
                 title={getSectionTitle(s.id, s.title)}
@@ -476,7 +478,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             ))}
             <div
               className={`h-1.5 rounded-full transition-all shrink-0 ${
-                isReviewStep ? 'bg-indigo-600 w-6' : 'bg-gray-200 w-1.5'
+                isReviewStep ? 'bg-indigo-600 w-5' : 'bg-gray-200 w-1.5'
               }`}
             />
           </div>
@@ -484,21 +486,21 @@ export default function FormWizard({ sections, token, initialData, invitation, i
       </header>
 
       {/* Content */}
-      <main className="max-w-2xl mx-auto px-4 py-6">
+      <main className="max-w-2xl mx-auto px-3 sm:px-4 py-5">
         {!isReviewStep && currentSection && (
           <div>
-            <div className="mb-6">
-              <div className="flex items-center gap-3 mb-1">
-                <span className="text-2xl">{SECTION_ICONS[currentSection.id] || '📄'}</span>
-                <h2 className="text-xl font-bold text-gray-900">
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xl">{SECTION_ICONS[currentSection.id] || '📄'}</span>
+                <h2 className="text-lg font-bold text-gray-900">
                   {getSectionTitle(currentSection.id, currentSection.title)}
                 </h2>
               </div>
               {currentSection.description && (
-                <p className="text-sm text-gray-500 ml-10">{currentSection.description}</p>
+                <p className="text-sm text-gray-500 ml-8">{currentSection.description}</p>
               )}
             </div>
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-6">
               {currentSection.fields.map(field => renderField(field))}
             </div>
           </div>
@@ -506,12 +508,12 @@ export default function FormWizard({ sections, token, initialData, invitation, i
 
         {isReviewStep && (
           <div>
-            <div className="mb-6">
-              <div className="flex items-center gap-3 mb-1">
-                <span className="text-2xl">✅</span>
-                <h2 className="text-xl font-bold text-gray-900">{t.reviewTitle}</h2>
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xl">✅</span>
+                <h2 className="text-lg font-bold text-gray-900">{t.reviewTitle}</h2>
               </div>
-              <p className="text-sm text-gray-500 ml-10">{t.reviewSubtitle}</p>
+              <p className="text-sm text-gray-500 ml-8">{t.reviewSubtitle}</p>
             </div>
 
             <div className="space-y-3">
@@ -520,7 +522,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                 if (filledFields.length === 0) return null
                 return (
                   <div key={section.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
+                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
                       <span className="text-base">{SECTION_ICONS[section.id] || '📄'}</span>
                       <h3 className="font-semibold text-gray-900 text-sm">
                         {getSectionTitle(section.id, section.title)}
@@ -529,11 +531,11 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                         {t.fields(filledFields.length)}
                       </span>
                     </div>
-                    <div className="p-5 space-y-2">
+                    <div className="p-4 space-y-2">
                       {filledFields.filter(f => f.type !== 'signature').map(field => (
-                        <div key={field.key} className="flex text-sm gap-3">
-                          <span className="text-gray-400 w-44 shrink-0 text-xs pt-0.5">{field.label}</span>
-                          <span className="text-gray-900 font-medium text-xs">
+                        <div key={field.key} className="flex text-sm gap-2">
+                          <span className="text-gray-400 w-28 sm:w-40 shrink-0 text-xs pt-0.5 leading-tight">{field.label}</span>
+                          <span className="text-gray-900 font-medium text-xs flex-1 min-w-0 break-words">
                             {field.type === 'checkbox'
                               ? (formData[field.key] ? '✓ Yes' : '—')
                               : String(formData[field.key] || '').slice(0, 80)}
@@ -541,8 +543,8 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                         </div>
                       ))}
                       {filledFields.filter(f => f.type === 'signature').map(field => (
-                        <div key={field.key} className="flex text-sm gap-3 items-center">
-                          <span className="text-gray-400 w-44 shrink-0 text-xs">{field.label}</span>
+                        <div key={field.key} className="flex text-sm gap-2 items-center">
+                          <span className="text-gray-400 w-28 sm:w-40 shrink-0 text-xs">{field.label}</span>
                           <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
                             <CheckCircle className="w-3 h-3" /> Signed
                           </span>
@@ -562,18 +564,21 @@ export default function FormWizard({ sections, token, initialData, invitation, i
       </main>
 
       {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 shadow-lg">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex justify-between items-center">
+      <div
+        className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 shadow-lg"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="max-w-2xl mx-auto px-3 sm:px-4 py-3 flex justify-between items-center">
           <button
             onClick={goBack}
             disabled={currentStep === 0}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft className="w-4 h-4" /> {t.back}
           </button>
 
           {!isReviewStep && (
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 truncate max-w-[100px] sm:max-w-[160px] text-center">
               {currentSection ? getSectionTitle(currentSection.id, currentSection.title) : ''}
             </span>
           )}
@@ -582,7 +587,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             <button
               onClick={handleSubmit}
               disabled={submitting}
-              className="flex items-center gap-2 px-7 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
             >
               {submitting ? (
                 <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> {t.submitting}</>
@@ -594,7 +599,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
             <button
               onClick={goNext}
               disabled={saving}
-              className="flex items-center gap-2 px-7 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 transition-all"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md shadow-indigo-200 disabled:opacity-60 transition-all"
             >
               {saving ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
