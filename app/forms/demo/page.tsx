@@ -1,4 +1,4 @@
-import FormWizard from '@/components/FormWizard'
+import FormModeSelector from '@/components/FormModeSelector'
 import { SELLER_DISCLOSURE_SECTIONS } from '@/lib/forms/seller-disclosure/config'
 
 export default function DemoFormPage() {
@@ -14,10 +14,9 @@ export default function DemoFormPage() {
         📋 DEMO PREVIEW — This is a preview only. Submissions will not be saved.
       </div>
       <div className="pt-8">
-        <FormWizard
+        <FormModeSelector
           sections={SELLER_DISCLOSURE_SECTIONS}
           token="demo"
-          initialData={{}}
           invitation={mockInvitation}
           isDemo={true}
         />
