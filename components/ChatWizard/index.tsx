@@ -7,6 +7,7 @@ import { Send, Bot, User, CheckCircle, Globe, ChevronRight } from 'lucide-react'
 interface ChatMessage {
   role: 'assistant' | 'user'
   content: string
+  options?: string[]  // quick-reply chips shown below this message
 }
 
 interface ChatWizardProps {
@@ -52,12 +53,14 @@ export default function ChatWizard({
   const callChat = useCallback(async (
     history: ChatMessage[],
     section: FormSection,
-  ): Promise<{ message: string; fieldUpdates: Record<string, unknown>; sectionComplete: boolean }> => {
+  ): Promise<{ message: string; fieldUpdates: Record<string, unknown>; sectionComplete: boolean; options: string[] }> => {
+    // Strip options from history before sending to API (API only needs role+content)
+    const apiHistory = history.map(({ role, content }) => ({ role, content }))
     const res = await fetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: history,
+        messages: apiHistory,
         sectionKey: section.id,
         sectionTitle: SECTION_TITLES[section.id]?.[language] ?? section.title,
         fields: section.fields,
@@ -77,7 +80,7 @@ export default function ChatWizard({
     setLoading(true)
     callChat([], currentSection)
       .then(data => {
-        setMessages([{ role: 'assistant', content: data.message }])
+        setMessages([{ role: 'assistant', content: data.message, options: data.options?.length ? data.options : undefined }])
         if (data.fieldUpdates) {
           Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
         }
@@ -111,7 +114,11 @@ export default function ChatWizard({
     setLoading(true)
     try {
       const data = await callChat([], nextSection)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.message,
+        options: data.options?.length ? data.options : undefined,
+      }])
       if (data.fieldUpdates) {
         Object.entries(data.fieldUpdates).forEach(([k, v]) => onUpdate(k, v))
       }
@@ -129,18 +136,34 @@ export default function ChatWizard({
     }
   }, [chatSections, language, callChat, onUpdate, onComplete])
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading || !currentSection) return
-    const userMsg: ChatMessage = { role: 'user', content: input.trim() }
-    const newHistory = [...messages, userMsg]
-    setMessages(newHistory)
+  const sendMessage = useCallback(async (text?: string) => {
+    const msgText = (text ?? input).trim()
+    if (!msgText || loading || !currentSection) return
+
+    // Clear options on all previous messages once user responds
+    setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
+
+    const userMsg: ChatMessage = { role: 'user', content: msgText }
+    setMessages(prev => [...prev, userMsg])
     setInput('')
     setLoading(true)
     inputRef.current?.focus()
 
     try {
+      // Get updated history including the new user message
+      const newHistory = await new Promise<ChatMessage[]>(resolve => {
+        setMessages(prev => {
+          resolve(prev)
+          return prev
+        })
+      })
+
       const data = await callChat(newHistory, currentSection)
-      const assistantMsg: ChatMessage = { role: 'assistant', content: data.message }
+      const assistantMsg: ChatMessage = {
+        role: 'assistant',
+        content: data.message,
+        options: data.options?.length ? data.options : undefined,
+      }
       setMessages(prev => [...prev, assistantMsg])
 
       if (data.fieldUpdates) {
@@ -161,7 +184,7 @@ export default function ChatWizard({
     } finally {
       setLoading(false)
     }
-  }
+  }, [input, loading, currentSection, callChat, sectionIndex, advanceToSection, onUpdate, language])
 
   const skipSection = () => {
     setCompletedSections(prev => new Set([...prev, sectionIndex]))
@@ -175,6 +198,9 @@ export default function ChatWizard({
   const sectionTitle = currentSection
     ? (SECTION_TITLES[currentSection.id]?.[language] ?? currentSection.title)
     : ''
+
+  // Find the last assistant message index to show its options
+  const lastAssistantIdx = messages.reduce((last, msg, i) => msg.role === 'assistant' ? i : last, -1)
 
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-slate-50 via-indigo-50/30 to-purple-50/20 flex flex-col">
@@ -246,29 +272,47 @@ export default function ChatWizard({
       </div>
 
       {/* ── Messages ───────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-4" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+      <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
         {messages.map((msg, i) => (
-          <div key={i} className={`flex items-end gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {msg.role === 'assistant' && (
-              <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shrink-0 shadow-sm">
-                <Bot className="w-3.5 h-3.5 text-white" />
-              </div>
-            )}
-            <div
-              className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                msg.role === 'user'
-                  ? 'bg-indigo-600 text-white rounded-br-sm'
-                  : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'
-              }`}
-              dangerouslySetInnerHTML={{
-                __html: msg.content
-                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/\n/g, '<br />'),
-              }}
-            />
-            {msg.role === 'user' && (
-              <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center shrink-0">
-                <User className="w-3.5 h-3.5 text-gray-500" />
+          <div key={i}>
+            <div className={`flex items-end gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                  <Bot className="w-3.5 h-3.5 text-white" />
+                </div>
+              )}
+              <div
+                className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                  msg.role === 'user'
+                    ? 'bg-indigo-600 text-white rounded-br-sm'
+                    : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'
+                }`}
+                dangerouslySetInnerHTML={{
+                  __html: msg.content
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\n/g, '<br />'),
+                }}
+              />
+              {msg.role === 'user' && (
+                <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center shrink-0">
+                  <User className="w-3.5 h-3.5 text-gray-500" />
+                </div>
+              )}
+            </div>
+
+            {/* Quick-reply option chips — only show on last assistant message, not loading */}
+            {msg.role === 'assistant' && i === lastAssistantIdx && !loading && msg.options && msg.options.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2 ml-9">
+                {msg.options.map((opt, oi) => (
+                  <button
+                    key={oi}
+                    onClick={() => sendMessage(opt)}
+                    disabled={loading}
+                    className="px-3.5 py-2 bg-white border-2 border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-400 active:scale-95 transition-all shadow-sm disabled:opacity-40"
+                  >
+                    {opt}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -314,7 +358,7 @@ export default function ChatWizard({
             style={{ minHeight: '44px', maxHeight: '120px' }}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={!input.trim() || loading}
             className="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center text-white hover:bg-indigo-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm shrink-0"
           >
