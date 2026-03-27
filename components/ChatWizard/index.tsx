@@ -15,6 +15,7 @@ interface ChatMessage {
   content: string
   options?: string[]
   isPropertyCard?: boolean
+  multiSelect?: boolean
 }
 
 interface PropertyData {
@@ -54,12 +55,13 @@ export default function ChatWizard({
   const [loading, setLoading] = useState(false)
   const [completedSections, setCompletedSections] = useState<Set<number>>(new Set())
   const [scriptStepIndex, setScriptStepIndex] = useState(0)
+  // Multi-select state: tracks which chips are toggled on for the current multi-select step
+  const [multiSelectItems, setMultiSelectItems] = useState<Set<string>>(new Set())
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initializedRef = useRef(false)
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
-  // Callback to run after property card is confirmed/dismissed
   const afterPropertyCardRef = useRef<(() => void) | null>(null)
   const scriptTempValsRef = useRef<Record<string, unknown>>({})
   const formValuesRef = useRef(formValues)
@@ -100,8 +102,6 @@ export default function ChatWizard({
     ...scriptTempValsRef.current,
   }), [])
 
-  // Takes an explicit vals snapshot so skipIf sees up-to-date values
-  // even when called from inside a setTimeout with a stale closure.
   const initScriptedSection = useCallback((
     script: ScriptStep[],
     append: boolean,
@@ -114,13 +114,19 @@ export default function ChatWizard({
     const ctx = buildScriptCtx(allVals, invitation.property_address)
     const q = language === 'es' ? step.questionEs(ctx) : step.question(ctx)
     const opts = language === 'es' ? (step.optionsEs ?? step.options) : step.options
-    const msg: ChatMessage = { role: 'assistant', content: q, options: opts }
+    const msg: ChatMessage = {
+      role: 'assistant',
+      content: q,
+      options: opts,
+      multiSelect: step.multiSelect,
+    }
     if (append) {
       setMessages(prev => [...prev, msg])
     } else {
       setMessages([msg])
     }
     setScriptStepIndex(firstIdx)
+    setMultiSelectItems(new Set())
     return true
   }, [getAllVals, getCtx, language, invitation.property_address])
 
@@ -152,7 +158,6 @@ export default function ChatWizard({
     }>
   }, [language, invitation, resolvedAddress])
 
-  // ── Trigger property lookup inline (called after header section ends) ────────
   const triggerPropertyLookup = useCallback(async (
     address: string,
     onDone: () => void,
@@ -202,7 +207,6 @@ export default function ChatWizard({
         : `I found some info about this property:\n\n${items.join('\n')}${confidenceNote}\n\nDoes this look right?`
 
       pendingPropertyDataRef.current = data
-      // Replace the "looking up" message with the property card
       setMessages(prev => [
         ...prev.slice(0, -1),
         {
@@ -220,7 +224,6 @@ export default function ChatWizard({
     }
   }, [language])
 
-  // ── Initialize first section on mount ────────────────────────────────────────
   useEffect(() => {
     if (initializedRef.current || !currentSection) return
     initializedRef.current = true
@@ -249,7 +252,6 @@ export default function ChatWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Advance to next section ──────────────────────────────────────────────────
   const advanceToSection = useCallback(async (nextIdx: number) => {
     if (nextIdx >= chatSections.length) {
       onComplete()
@@ -265,11 +267,10 @@ export default function ChatWizard({
     setMessages(prev => [...prev, transitionMsg])
     setSectionIndex(nextIdx)
     setScriptStepIndex(0)
+    setMultiSelectItems(new Set())
 
     const script = SCRIPTED_SECTIONS[nextSection.id]
     if (script) {
-      // Snapshot vals NOW (synchronously) so skipIf sees occ_property_age
-      // before the setTimeout fires, avoiding stale-closure issues.
       const valsSnapshot = {
         ...formValuesRef.current,
         ...scriptTempValsRef.current,
@@ -304,7 +305,6 @@ export default function ChatWizard({
     }
   }, [chatSections, language, callChat, onUpdate, onComplete, initScriptedSection])
 
-  // ── Re-prompt current scripted step (fallback if property card mid-section) ──
   const resumeCurrentScript = useCallback(() => {
     const secIdx = sectionIndexRef.current
     const section = chatSections[secIdx]
@@ -326,11 +326,16 @@ export default function ChatWizard({
     const ctx = buildScriptCtx(allVals, invitation.property_address)
     const q = language === 'es' ? step.questionEs(ctx) : step.question(ctx)
     const opts = language === 'es' ? (step.optionsEs ?? step.options) : step.options
-    setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+    setMessages(prev => [...prev, {
+      role: 'assistant',
+      content: q,
+      options: opts,
+      multiSelect: step.multiSelect,
+    }])
     setScriptStepIndex(stepIdx)
+    setMultiSelectItems(new Set())
   }, [chatSections, advanceToSection, language, invitation.property_address])
 
-  // ── Send a message (script mode or AI mode) ──────────────────────────────────
   const sendMessage = useCallback(async (text?: string) => {
     const msgText = (text ?? input).trim()
     if (!msgText || loading || !currentSection) return
@@ -348,7 +353,6 @@ export default function ChatWizard({
           const age = new Date().getFullYear() - propertyData.yearBuilt
           const ageStr = String(age)
           onUpdate('occ_property_age', ageStr)
-          // Write synchronously to ref so the snapshot in advanceToSection sees it
           scriptTempValsRef.current = { ...scriptTempValsRef.current, occ_property_age: ageStr }
         }
         if (propertyData.hoa === 'yes') {
@@ -368,7 +372,6 @@ export default function ChatWizard({
           content: language === 'es' ? '¿Qué necesita corregir?' : 'What needs to be corrected?',
         }])
       }
-      // Run the stored callback (advance to next section) or fall back to resumeCurrentScript
       const callback = afterPropertyCardRef.current ?? resumeCurrentScript
       afterPropertyCardRef.current = null
       setTimeout(() => callback(), 600)
@@ -381,6 +384,7 @@ export default function ChatWizard({
       setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
       setMessages(prev => [...prev, { role: 'user', content: msgText }])
       setInput('')
+      setMultiSelectItems(new Set())
       inputRef.current?.focus()
 
       // ── Address candidate pick ────────────────────────────────────────────
@@ -397,7 +401,6 @@ export default function ChatWizard({
           }])
           return
         }
-        // User picked a candidate — store and advance to confirm step
         scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: msgText }
         const allVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
         const nextIdx = findNextStep(script, scriptStepIndex, allVals)
@@ -409,7 +412,12 @@ export default function ChatWizard({
           const ctx = buildScriptCtx(allVals, invitation.property_address)
           const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
           const opts = language === 'es' ? (nextStep.optionsEs ?? nextStep.options) : nextStep.options
-          setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: q,
+            options: opts,
+            multiSelect: nextStep.multiSelect,
+          }])
           setScriptStepIndex(nextIdx)
         }
         return
@@ -429,7 +437,6 @@ export default function ChatWizard({
 
       const step = script[stepIdx]
 
-      // Store the raw answer in temp key first
       if (step.tempKey) {
         scriptTempValsRef.current = { ...scriptTempValsRef.current, [step.tempKey]: msgText }
       }
@@ -470,7 +477,6 @@ export default function ChatWizard({
         setLoading(false)
       }
 
-      // Collect field updates
       const combinedVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
       const updates: Record<string, unknown> = {}
       if (step.fieldKey) {
@@ -481,7 +487,6 @@ export default function ChatWizard({
         Object.assign(updates, extra)
       }
 
-      // Apply updates
       Object.entries(updates).forEach(([k, v]) => {
         if (k.startsWith('_')) {
           scriptTempValsRef.current = { ...scriptTempValsRef.current, [k]: v }
@@ -490,12 +495,10 @@ export default function ChatWizard({
         }
       })
 
-      // Find next non-skipped step
       const updatedAllVals = { ...combinedVals, ...updates }
       const nextIdx = findNextStep(script, stepIdx, updatedAllVals)
 
       if (nextIdx >= script.length) {
-        // Header section: trigger property lookup BEFORE advancing to occupancy
         setCompletedSections(prev => new Set([...prev, sectionIndex]))
         if (currentSection.id === 'header') {
           const address =
@@ -516,7 +519,12 @@ export default function ChatWizard({
         const ctx = buildScriptCtx(latestVals, invitation.property_address)
         const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
         const opts = language === 'es' ? (nextStep.optionsEs ?? nextStep.options) : nextStep.options
-        setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: q,
+          options: opts,
+          multiSelect: nextStep.multiSelect,
+        }])
         setScriptStepIndex(nextIdx)
       }
       return
@@ -688,23 +696,74 @@ export default function ChatWizard({
                 )}
               </div>
 
-              {/* Quick-reply chips — only on the last assistant message */}
+              {/* Quick-reply chips / multi-select — only on the last assistant message */}
               {msg.role === 'assistant' &&
                 i === lastAssistantIdx &&
                 !loading &&
                 msg.options &&
                 msg.options.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-3 ml-10">
-                    {msg.options.map((opt, oi) => (
-                      <button
-                        key={oi}
-                        onClick={() => sendMessage(opt)}
-                        disabled={loading}
-                        className="px-4 py-2 bg-white border-2 border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-400 active:scale-95 transition-all shadow-sm disabled:opacity-40"
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    {msg.options.map((opt, oi) => {
+                      if (msg.multiSelect) {
+                        // ── Multi-select: toggleable chips ──────────────────
+                        const isSelected = multiSelectItems.has(opt)
+                        return (
+                          <button
+                            key={oi}
+                            onClick={() => setMultiSelectItems(prev => {
+                              const next = new Set(prev)
+                              if (next.has(opt)) next.delete(opt)
+                              else next.add(opt)
+                              return next
+                            })}
+                            className={`px-3 py-2 border-2 rounded-xl text-sm font-medium active:scale-95 transition-all shadow-sm ${
+                              isSelected
+                                ? 'bg-indigo-600 border-indigo-600 text-white'
+                                : 'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400'
+                            }`}
+                          >
+                            {isSelected ? '✓ ' : ''}{opt}
+                          </button>
+                        )
+                      }
+                      // ── Single-select: tap to send immediately ──────────
+                      return (
+                        <button
+                          key={oi}
+                          onClick={() => sendMessage(opt)}
+                          disabled={loading}
+                          className="px-4 py-2 bg-white border-2 border-indigo-200 text-indigo-700 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-400 active:scale-95 transition-all shadow-sm disabled:opacity-40"
+                        >
+                          {opt}
+                        </button>
+                      )
+                    })}
+
+                    {/* Multi-select action buttons */}
+                    {msg.multiSelect && (
+                      <div className="w-full flex gap-2 mt-2">
+                        <button
+                          onClick={() => {
+                            const selected = Array.from(multiSelectItems)
+                            const text = selected.length > 0 ? selected.join(', ') : 'None of these'
+                            sendMessage(text)
+                          }}
+                          disabled={loading}
+                          className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 active:scale-[0.98] transition-all disabled:opacity-40 shadow-sm"
+                        >
+                          {multiSelectItems.size > 0
+                            ? `Continue (${multiSelectItems.size} selected) →`
+                            : 'Continue →'}
+                        </button>
+                        <button
+                          onClick={() => sendMessage('None of these')}
+                          disabled={loading}
+                          className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 active:scale-[0.98] transition-all disabled:opacity-40"
+                        >
+                          None
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
             </div>
