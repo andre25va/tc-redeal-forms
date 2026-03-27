@@ -53,7 +53,6 @@ export default function ChatWizard({
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [completedSections, setCompletedSections] = useState<Set<number>>(new Set())
-  // Which step within the current scripted section we're on
   const [scriptStepIndex, setScriptStepIndex] = useState(0)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -61,9 +60,7 @@ export default function ChatWizard({
   const initializedRef = useRef(false)
   const propertyLookupDoneRef = useRef(false)
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
-  // Temp values for the locked script (not sent to the form directly)
   const scriptTempValsRef = useRef<Record<string, unknown>>({})
-  // Keep a ref copy of formValues to avoid stale closures
   const formValuesRef = useRef(formValues)
   useEffect(() => { formValuesRef.current = formValues }, [formValues])
 
@@ -76,7 +73,6 @@ export default function ChatWizard({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-  // ── Resolved address ────────────────────────────────────────────────────────
   const resolvedAddress = useCallback(() => {
     return (
       (formValues?.property_address as string) ||
@@ -85,7 +81,6 @@ export default function ChatWizard({
     )
   }, [formValues, invitation.property_address])
 
-  // ── Build context for script questions ─────────────────────────────────────
   const getCtx = useCallback(() => {
     return buildScriptCtx(
       { ...formValuesRef.current, ...scriptTempValsRef.current },
@@ -93,13 +88,11 @@ export default function ChatWizard({
     )
   }, [invitation.property_address])
 
-  // ── Get all vals (form + temp) ──────────────────────────────────────────────
   const getAllVals = useCallback(() => ({
     ...formValuesRef.current,
     ...scriptTempValsRef.current,
   }), [])
 
-  // ── Display the first question of a scripted section ───────────────────────
   const initScriptedSection = useCallback((
     script: ScriptStep[],
     append: boolean,
@@ -121,7 +114,6 @@ export default function ChatWizard({
     return true
   }, [getAllVals, getCtx, language])
 
-  // ── AI call helper ──────────────────────────────────────────────────────────
   const callChat = useCallback(async (
     history: ChatMessage[],
     section: FormSection,
@@ -150,7 +142,7 @@ export default function ChatWizard({
     }>
   }, [language, invitation, resolvedAddress])
 
-  // ── Property data lookup (fires once after address is entered) ──────────────
+  // ── Property data lookup (fires once after address is committed to form) ─────
   useEffect(() => {
     const address = formValues?.property_address as string
     if (!address || propertyLookupDoneRef.current) return
@@ -199,7 +191,7 @@ export default function ChatWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formValues?.property_address])
 
-  // ── Initialize first section on mount ───────────────────────────────────────
+  // ── Initialize first section on mount ────────────────────────────────────────
   useEffect(() => {
     if (initializedRef.current || !currentSection) return
     initializedRef.current = true
@@ -247,7 +239,6 @@ export default function ChatWizard({
 
     const script = SCRIPTED_SECTIONS[nextSection.id]
     if (script) {
-      // Small delay so transition message is visible
       setTimeout(() => initScriptedSection(script, true), 300)
     } else {
       setLoading(true)
@@ -278,12 +269,12 @@ export default function ChatWizard({
     }
   }, [chatSections, language, callChat, onUpdate, onComplete, initScriptedSection])
 
-  // ── Send a message (script mode or AI mode) ─────────────────────────────────
+  // ── Send a message (script mode or AI mode) ──────────────────────────────────
   const sendMessage = useCallback(async (text?: string) => {
     const msgText = (text ?? input).trim()
     if (!msgText || loading || !currentSection) return
 
-    // ── Handle property card confirmation ──────────────────────────────────
+    // ── Handle property card confirmation ────────────────────────────────────
     const propertyData = pendingPropertyDataRef.current
     if (propertyData) {
       pendingPropertyDataRef.current = null
@@ -316,7 +307,7 @@ export default function ChatWizard({
       return
     }
 
-    // ── Scripted section mode ──────────────────────────────────────────────
+    // ── Scripted section mode ────────────────────────────────────────────────
     const script = SCRIPTED_SECTIONS[currentSection.id]
     if (script) {
       setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
@@ -326,7 +317,6 @@ export default function ChatWizard({
 
       const allVals = getAllVals()
 
-      // Re-verify the current step isn't skipped
       let stepIdx = scriptStepIndex
       while (stepIdx < script.length && script[stepIdx].skipIf?.(allVals)) {
         stepIdx++
@@ -339,9 +329,26 @@ export default function ChatWizard({
 
       const step = script[stepIdx]
 
-      // Update temp vals ref first
+      // Store the raw answer in temp key first
       if (step.tempKey) {
         scriptTempValsRef.current = { ...scriptTempValsRef.current, [step.tempKey]: msgText }
+      }
+
+      // ── Normalize address via GPT before showing confirmation ─────────────
+      if (step.id === 'property_address') {
+        setLoading(true)
+        try {
+          const res = await fetch('/api/ai/normalize-address', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address: msgText }),
+          })
+          const data = await res.json()
+          const normalized: string = (data.normalized as string)?.trim() || msgText
+          // Replace pending address with the normalized version
+          scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: normalized }
+        } catch { /* keep original on failure */ }
+        setLoading(false)
       }
 
       // Collect field updates
@@ -355,7 +362,7 @@ export default function ChatWizard({
         Object.assign(updates, extra)
       }
 
-      // Apply updates: non-temp keys go to form, temp keys stay in ref
+      // Apply updates
       Object.entries(updates).forEach(([k, v]) => {
         if (k.startsWith('_')) {
           scriptTempValsRef.current = { ...scriptTempValsRef.current, [k]: v }
@@ -369,12 +376,13 @@ export default function ChatWizard({
       const nextIdx = findNextStep(script, stepIdx, updatedAllVals)
 
       if (nextIdx >= script.length) {
-        // Scripted section complete
         setCompletedSections(prev => new Set([...prev, sectionIndex]))
         setTimeout(() => advanceToSection(sectionIndex + 1), 600)
       } else {
         const nextStep = script[nextIdx]
-        const ctx = buildScriptCtx(updatedAllVals, invitation.property_address)
+        // Build context using latest vals (including normalized address)
+        const latestVals = { ...formValuesRef.current, ...scriptTempValsRef.current, ...updates }
+        const ctx = buildScriptCtx(latestVals, invitation.property_address)
         const q = language === 'es' ? nextStep.questionEs(ctx) : nextStep.question(ctx)
         const opts = language === 'es' ? (nextStep.optionsEs ?? nextStep.options) : nextStep.options
         setMessages(prev => [...prev, { role: 'assistant', content: q, options: opts }])
@@ -383,7 +391,7 @@ export default function ChatWizard({
       return
     }
 
-    // ── AI mode ───────────────────────────────────────────────────────────
+    // ── AI mode ───────────────────────────────────────────────────────────────
     setMessages(prev => prev.map(m => ({ ...m, options: undefined })))
     const userMsg: ChatMessage = { role: 'user', content: msgText }
     setMessages(prev => [...prev, userMsg])
@@ -442,7 +450,7 @@ export default function ChatWizard({
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-slate-50 via-indigo-50/30 to-purple-50/20 flex flex-col">
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="bg-white/90 backdrop-blur border-b border-gray-100 shadow-sm">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -477,7 +485,7 @@ export default function ChatWizard({
         </div>
       </div>
 
-      {/* ── Progress bar ───────────────────────────────────────────────────── */}
+      {/* ── Progress bar ─────────────────────────────────────────────────────── */}
       <div className="h-1 bg-gray-100">
         <div
           className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-700"
@@ -485,7 +493,7 @@ export default function ChatWizard({
         />
       </div>
 
-      {/* ── Section pills ──────────────────────────────────────────────────── */}
+      {/* ── Section pills ────────────────────────────────────────────────────── */}
       <div className="bg-white/60 border-b border-gray-100">
         <div
           className="max-w-2xl mx-auto flex gap-2 px-4 py-2.5 overflow-x-auto"
@@ -511,7 +519,7 @@ export default function ChatWizard({
         </div>
       </div>
 
-      {/* ── Messages ───────────────────────────────────────────────────────── */}
+      {/* ── Messages ─────────────────────────────────────────────────────────── */}
       <div
         className="flex-1 overflow-y-auto py-5"
         style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
@@ -589,7 +597,7 @@ export default function ChatWizard({
         </div>
       </div>
 
-      {/* ── Input area ─────────────────────────────────────────────────────── */}
+      {/* ── Input area ───────────────────────────────────────────────────────── */}
       <div
         className="bg-white/90 backdrop-blur border-t border-gray-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
