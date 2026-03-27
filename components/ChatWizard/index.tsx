@@ -100,15 +100,18 @@ export default function ChatWizard({
     ...scriptTempValsRef.current,
   }), [])
 
+  // Takes an explicit vals snapshot so skipIf sees up-to-date values
+  // even when called from inside a setTimeout with a stale closure.
   const initScriptedSection = useCallback((
     script: ScriptStep[],
     append: boolean,
+    valsSnapshot?: Record<string, unknown>,
   ) => {
-    const allVals = getAllVals()
+    const allVals = valsSnapshot ?? getAllVals()
     const firstIdx = findNextStep(script, -1, allVals)
     if (firstIdx >= script.length) return false
     const step = script[firstIdx]
-    const ctx = getCtx()
+    const ctx = buildScriptCtx(allVals, invitation.property_address)
     const q = language === 'es' ? step.questionEs(ctx) : step.question(ctx)
     const opts = language === 'es' ? (step.optionsEs ?? step.options) : step.options
     const msg: ChatMessage = { role: 'assistant', content: q, options: opts }
@@ -119,7 +122,7 @@ export default function ChatWizard({
     }
     setScriptStepIndex(firstIdx)
     return true
-  }, [getAllVals, getCtx, language])
+  }, [getAllVals, getCtx, language, invitation.property_address])
 
   const callChat = useCallback(async (
     history: ChatMessage[],
@@ -265,7 +268,13 @@ export default function ChatWizard({
 
     const script = SCRIPTED_SECTIONS[nextSection.id]
     if (script) {
-      setTimeout(() => initScriptedSection(script, true), 300)
+      // Snapshot vals NOW (synchronously) so skipIf sees occ_property_age
+      // before the setTimeout fires, avoiding stale-closure issues.
+      const valsSnapshot = {
+        ...formValuesRef.current,
+        ...scriptTempValsRef.current,
+      }
+      setTimeout(() => initScriptedSection(script, true, valsSnapshot), 300)
     } else {
       setLoading(true)
       try {
@@ -339,6 +348,7 @@ export default function ChatWizard({
           const age = new Date().getFullYear() - propertyData.yearBuilt
           const ageStr = String(age)
           onUpdate('occ_property_age', ageStr)
+          // Write synchronously to ref so the snapshot in advanceToSection sees it
           scriptTempValsRef.current = { ...scriptTempValsRef.current, occ_property_age: ageStr }
         }
         if (propertyData.hoa === 'yes') {
