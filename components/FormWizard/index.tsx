@@ -17,6 +17,8 @@ interface FormWizardProps {
     seller_email: string
   }
   isDemo?: boolean
+  initialLanguage?: Language
+  onLanguageChange?: (lang: Language) => void
 }
 
 const SECTION_ICONS: Record<string, string> = {
@@ -172,7 +174,7 @@ function LanguageToggle({
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function FormWizard({ sections, token, initialData, invitation, isDemo }: FormWizardProps) {
+export default function FormWizard({ sections, token, initialData, invitation, isDemo, initialLanguage, onLanguageChange }: FormWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [formData, setFormData] = useState<Record<string, unknown>>(initialData)
   const [saving, setSaving] = useState(false)
@@ -181,7 +183,11 @@ export default function FormWizard({ sections, token, initialData, invitation, i
   const [pdfUrl, setPdfUrl] = useState('')
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [error, setError] = useState('')
-  const [language, setLanguage] = useState<Language>('en')
+  const [language, setLanguageState] = useState<Language>(initialLanguage ?? 'en')
+  const setLanguage = (lang: Language) => {
+    setLanguageState(lang)
+    onLanguageChange?.(lang)
+  }
 
   const t = UI[language]
 
