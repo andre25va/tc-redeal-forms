@@ -95,8 +95,9 @@ export const HEADER_SCRIPT: ScriptStep[] = [
     optionsEs: ['Sí, es correcto ✓', 'Necesito corregirlo'],
     skipIf: (vals) => !vals['_pending_address'],
     onAnswer: (answer, vals) => {
+      // Check specifically for fix phrases — NOT general words like "correct"
       const needsFix =
-        /fix|correct|wrong|incorrecto|corregir/i.test(answer)
+        /let me fix|fix it|necesito corregir/i.test(answer)
       if (needsFix) {
         return { _pending_address: '', _addr_confirmed: 'fix' }
       }
