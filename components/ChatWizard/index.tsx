@@ -58,12 +58,12 @@ export default function ChatWizard({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initializedRef = useRef(false)
-  const propertyLookupDoneRef = useRef(false)
   const pendingPropertyDataRef = useRef<PropertyData | null>(null)
+  // Callback to run after property card is confirmed/dismissed
+  const afterPropertyCardRef = useRef<(() => void) | null>(null)
   const scriptTempValsRef = useRef<Record<string, unknown>>({})
   const formValuesRef = useRef(formValues)
   const awaitingAddressPickRef = useRef(false)
-  // Track current section index in a ref so callbacks always see latest value
   const sectionIndexRef = useRef(0)
   const scriptStepIndexRef = useRef(0)
 
@@ -149,54 +149,73 @@ export default function ChatWizard({
     }>
   }, [language, invitation, resolvedAddress])
 
-  // ── Property data lookup (fires once after address is committed to form) ─────
-  useEffect(() => {
-    const address = formValues?.property_address as string
-    if (!address || propertyLookupDoneRef.current) return
-    propertyLookupDoneRef.current = true
+  // ── Trigger property lookup inline (called after header section ends) ────────
+  const triggerPropertyLookup = useCallback(async (
+    address: string,
+    onDone: () => void,
+  ) => {
+    afterPropertyCardRef.current = onDone
+    try {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: language === 'es'
+          ? '🔍 Buscando información de la propiedad...'
+          : '🔍 Looking up property details...',
+      }])
+      const res = await fetch('/api/ai/property', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      })
+      const data: PropertyData = await res.json()
+      if (!res.ok || (data as { error?: string }).error) {
+        afterPropertyCardRef.current = null
+        onDone()
+        return
+      }
 
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch('/api/ai/property', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address }),
-        })
-        const data: PropertyData = await res.json()
-        if (!res.ok || (data as { error?: string }).error) return
+      const items: string[] = []
+      if (data.yearBuilt) {
+        const age = new Date().getFullYear() - data.yearBuilt
+        items.push(`🏗️ Built: **${data.yearBuilt}** (~${age} yrs old)`)
+      }
+      if (data.propertyType) items.push(`🏠 Type: **${data.propertyType}**`)
+      if (data.hoa !== 'unknown') items.push(`🏘️ HOA: **${data.hoa === 'yes' ? 'Yes' : 'No'}**`)
 
-        const items: string[] = []
-        if (data.yearBuilt) {
-          const age = new Date().getFullYear() - data.yearBuilt
-          items.push(`🏗️ Built: **${data.yearBuilt}** (~${age} yrs old)`)
-        }
-        if (data.propertyType) items.push(`🏠 Type: **${data.propertyType}**`)
-        if (data.hoa !== 'unknown') items.push(`🏘️ HOA: **${data.hoa === 'yes' ? 'Yes' : 'No'}**`)
-        if (items.length === 0) return
+      if (items.length === 0) {
+        afterPropertyCardRef.current = null
+        onDone()
+        return
+      }
 
-        const confidenceNote = data.confidence === 'low'
-          ? (language === 'es' ? '\n\n_Esto es una estimación — confirme por favor._' : '\n\n_This is an estimate — please confirm._')
-          : ''
+      const confidenceNote = data.confidence === 'low'
+        ? (language === 'es'
+          ? '\n\n_Esto es una estimación — confirme por favor._'
+          : '\n\n_This is an estimate — please confirm._')
+        : ''
 
-        const msg = language === 'es'
-          ? `Encontré información sobre esta propiedad:\n\n${items.join('\n')}${confidenceNote}\n\n¿Esto se ve correcto?`
-          : `I found some info about this property:\n\n${items.join('\n')}${confidenceNote}\n\nDoes this look right?`
+      const msg = language === 'es'
+        ? `Encontré información sobre esta propiedad:\n\n${items.join('\n')}${confidenceNote}\n\n¿Esto se ve correcto?`
+        : `I found some info about this property:\n\n${items.join('\n')}${confidenceNote}\n\nDoes this look right?`
 
-        pendingPropertyDataRef.current = data
-        setMessages(prev => [...prev, {
+      pendingPropertyDataRef.current = data
+      // Replace the "looking up" message with the property card
+      setMessages(prev => [
+        ...prev.slice(0, -1),
+        {
           role: 'assistant',
           content: msg,
           options: language === 'es'
             ? ['Sí, correcto ✓', 'Algo está mal']
             : ["Yes, that's right ✓", "Something's off"],
           isPropertyCard: true,
-        }])
-      } catch { /* silent */ }
-    }, 1200)
-
-    return () => clearTimeout(timer)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formValues?.property_address])
+        },
+      ])
+    } catch {
+      afterPropertyCardRef.current = null
+      onDone()
+    }
+  }, [language])
 
   // ── Initialize first section on mount ────────────────────────────────────────
   useEffect(() => {
@@ -276,7 +295,7 @@ export default function ChatWizard({
     }
   }, [chatSections, language, callChat, onUpdate, onComplete, initScriptedSection])
 
-  // ── Re-prompt the current scripted step (used after property card interlude) ──
+  // ── Re-prompt current scripted step (fallback if property card mid-section) ──
   const resumeCurrentScript = useCallback(() => {
     const secIdx = sectionIndexRef.current
     const section = chatSections[secIdx]
@@ -284,10 +303,8 @@ export default function ChatWizard({
     const script = SCRIPTED_SECTIONS[section.id]
     if (!script) return
 
-    // Merge formValuesRef + scriptTempValsRef for skipIf checks
     const allVals = { ...formValuesRef.current, ...scriptTempValsRef.current }
     let stepIdx = scriptStepIndexRef.current
-    // Skip any steps whose skipIf condition is now met
     while (stepIdx < script.length && script[stepIdx].skipIf?.(allVals)) {
       stepIdx++
     }
@@ -321,9 +338,6 @@ export default function ChatWizard({
         if (propertyData.yearBuilt) {
           const age = new Date().getFullYear() - propertyData.yearBuilt
           const ageStr = String(age)
-          // Write to BOTH onUpdate (form state) AND scriptTempValsRef so
-          // resumeCurrentScript can see it immediately without waiting for
-          // React to re-render and sync formValuesRef
           onUpdate('occ_property_age', ageStr)
           scriptTempValsRef.current = { ...scriptTempValsRef.current, occ_property_age: ageStr }
         }
@@ -338,14 +352,16 @@ export default function ChatWizard({
           role: 'assistant',
           content: language === 'es' ? 'Guardado. Continuemos.' : 'Saved. Moving on.',
         }])
-        // Resume the current scripted section after short delay
-        setTimeout(() => resumeCurrentScript(), 600)
       } else {
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: language === 'es' ? '¿Qué necesita corregir?' : 'What needs to be corrected?',
         }])
       }
+      // Run the stored callback (advance to next section) or fall back to resumeCurrentScript
+      const callback = afterPropertyCardRef.current ?? resumeCurrentScript
+      afterPropertyCardRef.current = null
+      setTimeout(() => callback(), 600)
       return
     }
 
@@ -436,7 +452,6 @@ export default function ChatWizard({
             return
           }
 
-          // Single candidate — normalize and continue
           const normalized = candidates[0]?.trim() || msgText
           scriptTempValsRef.current = { ...scriptTempValsRef.current, _pending_address: normalized }
         } catch {
@@ -470,8 +485,21 @@ export default function ChatWizard({
       const nextIdx = findNextStep(script, stepIdx, updatedAllVals)
 
       if (nextIdx >= script.length) {
+        // Header section: trigger property lookup BEFORE advancing to occupancy
         setCompletedSections(prev => new Set([...prev, sectionIndex]))
-        setTimeout(() => advanceToSection(sectionIndex + 1), 600)
+        if (currentSection.id === 'header') {
+          const address =
+            (updates['property_address'] as string) ||
+            (updatedAllVals['property_address'] as string) ||
+            ''
+          if (address) {
+            triggerPropertyLookup(address, () => advanceToSection(sectionIndex + 1))
+          } else {
+            setTimeout(() => advanceToSection(sectionIndex + 1), 600)
+          }
+        } else {
+          setTimeout(() => advanceToSection(sectionIndex + 1), 600)
+        }
       } else {
         const nextStep = script[nextIdx]
         const latestVals = { ...formValuesRef.current, ...scriptTempValsRef.current, ...updates }
@@ -520,7 +548,7 @@ export default function ChatWizard({
     } finally {
       setLoading(false)
     }
-  }, [input, loading, currentSection, scriptStepIndex, sectionIndex, advanceToSection, onUpdate, language, callChat, getAllVals, invitation.property_address, resumeCurrentScript])
+  }, [input, loading, currentSection, scriptStepIndex, sectionIndex, advanceToSection, onUpdate, language, callChat, getAllVals, invitation.property_address, resumeCurrentScript, triggerPropertyLookup])
 
   const skipSection = () => {
     setCompletedSections(prev => new Set([...prev, sectionIndex]))
