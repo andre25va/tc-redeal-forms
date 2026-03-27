@@ -22,7 +22,6 @@ export async function POST(req: NextRequest) {
     const lang = language === 'es' ? 'Spanish' : 'English'
     const isFirstMessage = !messages || messages.length === 0
 
-    // Build a concise field list for the prompt
     const fieldList = (fields as Array<{
       key: string; type: string; label: string; choices?: string[]
     }>)
@@ -34,7 +33,6 @@ export async function POST(req: NextRequest) {
       })
       .join('\n')
 
-    // Already answered context
     const answered = (fields as Array<{ key: string; label: string }>)
       .filter(f => formValues?.[f.key] !== undefined && formValues[f.key] !== '' && formValues[f.key] !== null)
       .map(f => `  ${f.key}: ${JSON.stringify(formValues[f.key])}`)
@@ -75,16 +73,16 @@ ${isFirstMessage ? `- Start by briefly introducing this section (1 sentence) the
 QUICK REPLY OPTIONS:
 - When your question has 2-5 clear discrete choices, include an OPTIONS tag with the choices
 - Examples of when to use OPTIONS:
-  * Yes/No questions → ["Yes", "No"]
-  * Yes/No/Not Sure → ["Yes", "No", "Not sure"]
-  * Seller identity → ["Seller 1", "Seller 2", "Both sellers"]
-  * Fixture status → ["Stays (OS)", "Taking it (EX)", "N/A", "Not sure"]
-  * Known choice fields → use the actual option labels
+  * Yes/No questions -> ["Yes", "No"]
+  * Yes/No/Not Sure -> ["Yes", "No", "Not sure"]
+  * Seller identity -> ["Seller 1", "Seller 2", "Both sellers"]
+  * Fixture status -> ["Stays (OS)", "Taking it (EX)", "N/A", "Not sure"]
+  * Known choice fields -> use the actual option labels
 - For open-ended questions (dates, names, dollar amounts, descriptions) do NOT include OPTIONS
 - OPTIONS appear as tappable buttons the user can tap instead of typing
 
 RESPONSE FORMAT - You MUST include these tags at the END of every response:
-<OPTIONS>["option1", "option2"]</OPTIONS>  ← include only when discrete choices apply, otherwise omit
+<OPTIONS>["option1", "option2"]</OPTIONS>  <- include only when discrete choices apply, otherwise omit
 <UPDATES>{"fieldKey": "value"}</UPDATES>
 <COMPLETE>true|false</COMPLETE>
 
@@ -122,8 +120,8 @@ Field value formats:
     const data = await response.json()
     const raw = data.choices?.[0]?.message?.content || ''
 
-    // Parse hidden tags
-    const optionsMatch = raw.match(/<OPTIONS>(\[.*?\])<\/OPTIONS>/s)
+    // Parse hidden tags — use [\s\S] instead of s-flag for ES2017 compat
+    const optionsMatch = raw.match(/<OPTIONS>([\s\S]*?)<\/OPTIONS>/)
     const updatesMatch = raw.match(/<UPDATES>([\s\S]*?)<\/UPDATES>/)
     const completeMatch = raw.match(/<COMPLETE>(true|false)<\/COMPLETE>/)
 
@@ -133,15 +131,17 @@ Field value formats:
 
     try {
       if (updatesMatch?.[1]) fieldUpdates = JSON.parse(updatesMatch[1].trim())
-    } catch { /* ignore parse errors */ }
+    } catch { /* ignore */ }
 
     try {
-      if (optionsMatch?.[1]) options = JSON.parse(optionsMatch[1].trim())
-    } catch { /* ignore parse errors */ }
+      if (optionsMatch?.[1]) {
+        const parsed = JSON.parse(optionsMatch[1].trim())
+        if (Array.isArray(parsed)) options = parsed
+      }
+    } catch { /* ignore */ }
 
     if (completeMatch?.[1] === 'true') sectionComplete = true
 
-    // Strip hidden tags from display message
     const message = raw
       .replace(/<OPTIONS>[\s\S]*?<\/OPTIONS>/g, '')
       .replace(/<UPDATES>[\s\S]*?<\/UPDATES>/g, '')
