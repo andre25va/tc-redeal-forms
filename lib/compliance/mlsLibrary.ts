@@ -1,4 +1,4 @@
-import { MlsBoard } from '../types';
+import { MlsBoard } from './types';
 
 export const MLS_LIBRARY: MlsBoard[] = [
   {
