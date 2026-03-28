@@ -188,16 +188,27 @@ export default function MapperPage() {
   const [pendingRect, setPendingRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const [showDrawModal, setShowDrawModal] = useState(false)
 
+  // Use refs for drawing state so document listeners can access current values
+  const isDrawingRef = useRef(false)
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pendingRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  const selectedFieldRef = useRef<string | null>(null)
+  const formConfigRef = useRef(formConfig)
+  const currentPageRef = useRef(currentPage)
+
+  // Keep refs in sync
+  useEffect(() => { selectedFieldRef.current = selectedField }, [selectedField])
+  useEffect(() => { formConfigRef.current = formConfig }, [formConfig])
+  useEffect(() => { currentPageRef.current = currentPage }, [currentPage])
 
   // Derived field lists
   const sellerFields = SELLER_DISCLOSURE_FIELDS
   const pageSellerFields = sellerFields.filter(f => f.page === currentPage)
   const allSections = Array.from(new Set(sellerFields.map(f => f.section)))
 
-  // For free-form forms: build field list from freeformFields (populated from DB)
-  // Fallback: derive from coordinates if freeformFields is empty but coordinates loaded
   const effectiveFreeformFields: FreeformField[] = freeformFields.length > 0
     ? freeformFields
     : Object.entries(coordinates).map(([key, coord]) => ({
@@ -217,7 +228,6 @@ export default function MapperPage() {
   const loadCoords = useCallback(async () => {
     setLoading(true)
     setDbError(null)
-    console.log('[Mapper] Loading coords for form:', formSlug)
 
     const { data, error } = await supabase
       .from('field_coordinates')
@@ -227,19 +237,15 @@ export default function MapperPage() {
     setLoading(false)
 
     if (error) {
-      console.error('[Mapper] Supabase error:', error)
       setDbError(`DB error: ${error.message}`)
       return
     }
 
-    console.log('[Mapper] Loaded', data?.length ?? 0, 'fields for', formSlug)
-
     if (!data || data.length === 0) {
-      console.warn('[Mapper] No fields found for', formSlug, '— check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env vars')
       if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        setDbError('NEXT_PUBLIC_SUPABASE_URL is not set in Vercel env vars')
+        setDbError('NEXT_PUBLIC_SUPABASE_URL is not set — add it in Vercel env vars')
       } else if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        setDbError('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set in Vercel env vars')
+        setDbError('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set — add it in Vercel env vars')
       }
       return
     }
@@ -332,11 +338,13 @@ export default function MapperPage() {
     x: number, y: number, width: number, height: number,
     opts?: { type?: string; isSignature?: boolean; isInitial?: boolean; required?: boolean }
   ) {
+    const pg = currentPageRef.current
+    const slug = formConfigRef.current === FORMS['seller-disclosure'] ? 'seller-disclosure' : 'residential-sale-contract'
     const { error } = await supabase.from('field_coordinates').upsert(
       {
         field_key: key,
-        form_slug: formSlug,
-        page_num: currentPage,
+        form_slug: slug,
+        page_num: pg,
         x, y, width, height,
         field_type: opts?.type,
         is_signature: opts?.isSignature ?? false,
@@ -348,13 +356,16 @@ export default function MapperPage() {
     )
 
     if (!error) {
-      setCoordinates(prev => ({ ...prev, [key]: { x, y, width, height, page_num: currentPage, field_type: opts?.type, is_signature: opts?.isSignature, is_initial: opts?.isInitial, required: opts?.required } }))
+      setCoordinates(prev => ({ ...prev, [key]: { x, y, width, height, page_num: pg, field_type: opts?.type, is_signature: opts?.isSignature, is_initial: opts?.isInitial, required: opts?.required } }))
       showMsg(`✓ Saved ${key}`, 'ok')
 
-      if (formConfig.predefinedFields) {
-        const idx = pageSellerFields.findIndex(f => f.key === key)
-        const next = pageSellerFields.slice(idx + 1).find(f => !coordinates[f.key])
-        if (next) setSelectedField(next.key)
+      if (formConfigRef.current.predefinedFields) {
+        const pFields = SELLER_DISCLOSURE_FIELDS.filter(f => f.page === pg)
+        const idx = pFields.findIndex(f => f.key === key)
+        // find next unmapped — but we need current coords which are being updated async
+        // just advance to next field
+        const nextField = pFields[idx + 1]
+        if (nextField) setSelectedField(nextField.key)
       }
     } else {
       showMsg(`✗ ${error.message}`, 'err')
@@ -378,76 +389,108 @@ export default function MapperPage() {
     if (type !== 'info') setTimeout(() => setMessage(''), 3000)
   }
 
-  function getRelativePos(e: React.MouseEvent, bounds: DOMRect) {
+  // ─── Document-level mouse handlers (drawing always works, even outside div) ─
+  function getPosRelativeToImg(clientX: number, clientY: number): { x: number; y: number } | null {
+    const bounds = getImgBounds()
+    if (!bounds) return null
     return {
-      x: Math.max(0, Math.min(e.clientX - bounds.left, bounds.width)),
-      y: Math.max(0, Math.min(e.clientY - bounds.top, bounds.height)),
+      x: Math.max(0, Math.min(clientX - bounds.left, bounds.width)),
+      y: Math.max(0, Math.min(clientY - bounds.top, bounds.height)),
     }
   }
 
-  function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+  function onOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!imgLoaded) return
     if (formConfig.predefinedFields && !selectedField) return
-    const bounds = getImgBounds()
-    if (!bounds) return
     e.preventDefault()
-    const pos = getRelativePos(e, bounds)
+
+    const pos = getPosRelativeToImg(e.clientX, e.clientY)
+    if (!pos) return
+
+    isDrawingRef.current = true
+    drawStartRef.current = pos
     setIsDrawing(true)
     setDrawStart(pos)
     setDrawCurrent(pos)
   }
 
-  function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (!isDrawing) return
-    const bounds = getImgBounds()
-    if (!bounds) return
-    setDrawCurrent(getRelativePos(e, bounds))
-  }
+  // Attach document-level move/up when drawing — so cursor can leave overlay
+  useEffect(() => {
+    function onDocMouseMove(e: MouseEvent) {
+      if (!isDrawingRef.current) return
+      const pos = getPosRelativeToImg(e.clientX, e.clientY)
+      if (pos) setDrawCurrent(pos)
+    }
 
-  async function onMouseUp() {
-    if (!isDrawing || !drawStart || !drawCurrent) {
+    async function onDocMouseUp(e: MouseEvent) {
+      if (!isDrawingRef.current) return
+      isDrawingRef.current = false
+
+      const start = drawStartRef.current
+      const pos = getPosRelativeToImg(e.clientX, e.clientY)
+
       setIsDrawing(false)
-      return
+      setDrawStart(null)
+      setDrawCurrent(null)
+      drawStartRef.current = null
+
+      if (!start || !pos) return
+
+      const left   = Math.min(start.x, pos.x)
+      const top    = Math.min(start.y, pos.y)
+      const right  = Math.max(start.x, pos.x)
+      const bottom = Math.max(start.y, pos.y)
+
+      if (right - left < 4 || bottom - top < 4) return
+
+      const bounds = getImgBounds()
+      if (!bounds) return
+
+      const pdfRect = {
+        x: left * (PDF_W / bounds.width),
+        y: PDF_H - bottom * (PDF_H / bounds.height),
+        width:  (right - left)  * (PDF_W / bounds.width),
+        height: (bottom - top)  * (PDF_H / bounds.height),
+      }
+
+      const cfg = formConfigRef.current
+      const selField = selectedFieldRef.current
+
+      if (cfg.predefinedFields && selField) {
+        await saveFieldRect(selField, pdfRect.x, pdfRect.y, pdfRect.width, pdfRect.height)
+      } else if (!cfg.predefinedFields) {
+        pendingRectRef.current = pdfRect
+        setPendingRect(pdfRect)
+        setShowDrawModal(true)
+      }
     }
-    const bounds = getImgBounds()
-    if (!bounds) { setIsDrawing(false); return }
 
-    const left = Math.min(drawStart.x, drawCurrent.x)
-    const top = Math.min(drawStart.y, drawCurrent.y)
-    const right = Math.max(drawStart.x, drawCurrent.x)
-    const bottom = Math.max(drawStart.y, drawCurrent.y)
-
-    setIsDrawing(false)
-    setDrawStart(null)
-    setDrawCurrent(null)
-
-    if (right - left < 4 || bottom - top < 4) return
-
-    const pdfRect = screenToPdfRect(left, top, right, bottom, bounds)
-
-    if (formConfig.predefinedFields && selectedField) {
-      await saveFieldRect(selectedField, pdfRect.x, pdfRect.y, pdfRect.width, pdfRect.height)
-    } else {
-      setPendingRect(pdfRect)
-      setShowDrawModal(true)
+    document.addEventListener('mousemove', onDocMouseMove)
+    document.addEventListener('mouseup', onDocMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onDocMouseMove)
+      document.removeEventListener('mouseup', onDocMouseUp)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgLoaded])
 
   async function handleModalSave(name: string, type: string, isSignature: boolean, isInitial: boolean, required: boolean) {
-    if (!pendingRect) return
+    const rect = pendingRectRef.current || pendingRect
+    if (!rect) return
     setShowDrawModal(false)
     const newField: FreeformField = {
       field_key: name,
       label: name.replace(/_/g, ' '),
       type,
-      page: currentPage,
+      page: currentPageRef.current,
       is_signature: isSignature,
       is_initial: isInitial,
       required,
     }
     setFreeformFields(prev => [...prev.filter(f => f.field_key !== name), newField])
-    await saveFieldRect(name, pendingRect.x, pendingRect.y, pendingRect.width, pendingRect.height, { type, isSignature, isInitial, required })
+    await saveFieldRect(name, rect.x, rect.y, rect.width, rect.height, { type, isSignature, isInitial, required })
     setPendingRect(null)
+    pendingRectRef.current = null
   }
 
   async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -503,13 +546,13 @@ export default function MapperPage() {
     ? sellerFields.find(f => f.key === selectedField)
     : effectiveFreeformFields.find(f => f.field_key === selectedField)
 
-  // ── Overlay: derive directly from coordinates for current page ─────────────
-  // This works for BOTH modes and doesn't depend on freeformFields being loaded
   const overlayFields: { key: string; type: string }[] = formConfig.predefinedFields
     ? pageSellerFields.filter(f => coordinates[f.key]).map(f => ({ key: f.key, type: f.type }))
     : Object.entries(coordinates)
         .filter(([, coord]) => coord.page_num === currentPage)
         .map(([key, coord]) => ({ key, type: coord.field_type || 'text' }))
+
+  const canDraw = imgLoaded && (!formConfig.predefinedFields || !!selectedField)
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
@@ -518,7 +561,7 @@ export default function MapperPage() {
         <DrawModal
           pageNum={currentPage}
           onSave={handleModalSave}
-          onCancel={() => { setShowDrawModal(false); setPendingRect(null) }}
+          onCancel={() => { setShowDrawModal(false); setPendingRect(null); pendingRectRef.current = null }}
         />
       )}
 
@@ -555,10 +598,13 @@ export default function MapperPage() {
             </span>
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            {formConfig.predefinedFields ? 'Select a field, then draw on PDF' : 'Draw a box on the PDF to add fields'}
+            {formConfig.predefinedFields
+              ? selectedField
+                ? '👆 Click a field below, then drag on the PDF'
+                : '← Select a field from the list, then drag'
+              : '✏️ Drag anywhere on the PDF to draw a field'}
           </p>
 
-          {/* DB Error banner */}
           {dbError && (
             <div className="flex items-start gap-2 bg-red-950 border border-red-800 rounded-xl p-2.5 mb-3">
               <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
@@ -694,7 +740,7 @@ export default function MapperPage() {
             <div className="text-center text-gray-600 text-xs py-8 whitespace-pre-line">
               {formConfig.predefinedFields
                 ? 'No fields match filters'
-                : 'No fields mapped on this page yet.\nDraw a box on the PDF to add one.'}
+                : 'No fields mapped on this page yet.\nDrag on the PDF to draw a field.'}
             </div>
           )}
           {filteredFields.map(field => {
@@ -751,7 +797,7 @@ export default function MapperPage() {
               <div className="flex items-center gap-1.5 mb-1">
                 <Info className="w-3 h-3 text-indigo-400" />
                 <p className="text-xs font-bold text-indigo-300">
-                  {formConfig.predefinedFields ? 'Click & drag to place' : 'Draw on PDF to add fields'}
+                  {formConfig.predefinedFields ? 'Drag on PDF to place' : 'Drag on PDF to add fields'}
                 </p>
               </div>
               <p className="text-xs text-white font-medium truncate">
@@ -833,16 +879,13 @@ export default function MapperPage() {
 
             {imgLoaded && (
               <div
+                ref={overlayRef}
                 className={`absolute inset-0 ${
-                  formConfig.predefinedFields
-                    ? (selectedField ? 'cursor-crosshair' : 'cursor-default')
-                    : 'cursor-crosshair'
+                  canDraw ? 'cursor-crosshair' : 'cursor-default'
                 }`}
-                onMouseDown={onMouseDown}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseUp}
+                onMouseDown={onOverlayMouseDown}
               >
+                {/* Draw preview rectangle */}
                 {drawPreview && (
                   <div
                     className="absolute border-2 border-dashed border-white bg-white/10 pointer-events-none"
@@ -853,6 +896,7 @@ export default function MapperPage() {
                   />
                 )}
 
+                {/* Field overlays */}
                 {overlayFields.map(({ key, type }) => {
                   const coord = coordinates[key]
                   if (!coord) return null
