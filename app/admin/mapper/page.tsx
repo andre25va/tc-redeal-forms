@@ -4,7 +4,7 @@ import { SELLER_DISCLOSURE_FIELDS, SECTION_META } from '@/lib/forms/seller-discl
 import { createClient } from '@supabase/supabase-js'
 import {
   ChevronLeft, ChevronRight, Check, X, ZoomIn, ZoomOut, RotateCcw,
-  Cpu, Upload, Trash2, Info, FileText, Plus
+  Cpu, Upload, Trash2, Info, FileText, Plus, AlertCircle
 } from 'lucide-react'
 
 const supabase = createClient(
@@ -68,7 +68,6 @@ interface FreeformField {
   required: boolean
 }
 
-// Modal for naming a newly drawn field (purchase contract free-form mode)
 interface DrawModalProps {
   onSave: (name: string, type: string, isSignature: boolean, isInitial: boolean, required: boolean) => void
   onCancel: () => void
@@ -85,7 +84,6 @@ function DrawModal({ onSave, onCancel, pageNum }: DrawModalProps) {
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  // Auto-set sig/init when type changes
   useEffect(() => {
     if (type === 'signature') { setIsSig(true); setIsInit(false) }
     else if (type === 'initials') { setIsInit(true); setIsSig(false) }
@@ -105,7 +103,6 @@ function DrawModal({ onSave, onCancel, pageNum }: DrawModalProps) {
           <Plus className="w-4 h-4 text-indigo-400" />
           Name this field <span className="text-xs text-gray-500 font-normal ml-1">(Page {pageNum})</span>
         </h3>
-
         <div className="space-y-3">
           <div>
             <label className="text-xs text-gray-400 mb-1 block">Field Key (snake_case)</label>
@@ -118,7 +115,6 @@ function DrawModal({ onSave, onCancel, pageNum }: DrawModalProps) {
               className="w-full bg-gray-800 border border-gray-600 rounded-lg text-sm text-white px-3 py-2 focus:outline-none focus:border-indigo-500"
             />
           </div>
-
           <div>
             <label className="text-xs text-gray-400 mb-1 block">Field Type</label>
             <select
@@ -131,7 +127,6 @@ function DrawModal({ onSave, onCancel, pageNum }: DrawModalProps) {
               ))}
             </select>
           </div>
-
           <div className="flex gap-4 pt-1">
             <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
               <input type="checkbox" checked={isSig} onChange={e => setIsSig(e.target.checked)} className="rounded" />
@@ -147,7 +142,6 @@ function DrawModal({ onSave, onCancel, pageNum }: DrawModalProps) {
             </label>
           </div>
         </div>
-
         <div className="flex gap-2 mt-5">
           <button
             onClick={handleSave}
@@ -184,6 +178,8 @@ export default function MapperPage() {
   const [baking, setBaking] = useState(false)
   const [originalUploaded, setOriginalUploaded] = useState(false)
   const [imgLoaded, setImgLoaded] = useState(false)
+  const [dbError, setDbError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   // Drawing state
   const [isDrawing, setIsDrawing] = useState(false)
@@ -199,46 +195,81 @@ export default function MapperPage() {
   const sellerFields = SELLER_DISCLOSURE_FIELDS
   const pageSellerFields = sellerFields.filter(f => f.page === currentPage)
   const allSections = Array.from(new Set(sellerFields.map(f => f.section)))
-  const pageFreeformFields = freeformFields.filter(f => f.page === currentPage)
 
+  // For free-form forms: build field list from freeformFields (populated from DB)
+  // Fallback: derive from coordinates if freeformFields is empty but coordinates loaded
+  const effectiveFreeformFields: FreeformField[] = freeformFields.length > 0
+    ? freeformFields
+    : Object.entries(coordinates).map(([key, coord]) => ({
+        field_key: key,
+        label: key.replace(/_/g, ' '),
+        type: coord.field_type || 'text',
+        page: coord.page_num,
+        is_signature: !!coord.is_signature,
+        is_initial: !!coord.is_initial,
+        required: !!coord.required,
+      }))
+
+  const pageFreeformFields = effectiveFreeformFields.filter(f => f.page === currentPage)
   const currentPageFields = formConfig.predefinedFields ? pageSellerFields : pageFreeformFields
 
   // ─── Load saved data ─────────────────────────────────────────────────────
   const loadCoords = useCallback(async () => {
-    const { data } = await supabase
+    setLoading(true)
+    setDbError(null)
+    console.log('[Mapper] Loading coords for form:', formSlug)
+
+    const { data, error } = await supabase
       .from('field_coordinates')
       .select('*')
       .eq('form_slug', formSlug)
 
-    if (data) {
-      const map: Record<string, FieldRect> = {}
-      data.forEach((row: { field_key: string; x: number; y: number; width: number; height: number; page_num: number; field_type?: string; is_signature?: boolean; is_initial?: boolean; required?: boolean }) => {
-        map[row.field_key] = {
-          x: row.x, y: row.y,
-          width: row.width || 100,
-          height: row.height || 16,
-          page_num: row.page_num || 1,
-          field_type: row.field_type,
-          is_signature: row.is_signature,
-          is_initial: row.is_initial,
-          required: row.required,
-        }
-      })
-      setCoordinates(map)
+    setLoading(false)
 
-      // For free-form forms, reconstruct field list from DB
-      if (!formConfig.predefinedFields) {
-        const ff: FreeformField[] = data.map((row: { field_key: string; field_type?: string; page_num: number; is_signature?: boolean; is_initial?: boolean; required?: boolean }) => ({
-          field_key: row.field_key,
-          label: row.field_key.replace(/_/g, ' '),
-          type: row.field_type || 'text',
-          page: row.page_num,
-          is_signature: !!row.is_signature,
-          is_initial: !!row.is_initial,
-          required: !!row.required,
-        }))
-        setFreeformFields(ff)
+    if (error) {
+      console.error('[Mapper] Supabase error:', error)
+      setDbError(`DB error: ${error.message}`)
+      return
+    }
+
+    console.log('[Mapper] Loaded', data?.length ?? 0, 'fields for', formSlug)
+
+    if (!data || data.length === 0) {
+      console.warn('[Mapper] No fields found for', formSlug, '— check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env vars')
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        setDbError('NEXT_PUBLIC_SUPABASE_URL is not set in Vercel env vars')
+      } else if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        setDbError('NEXT_PUBLIC_SUPABASE_ANON_KEY is not set in Vercel env vars')
       }
+      return
+    }
+
+    const map: Record<string, FieldRect> = {}
+    data.forEach((row: { field_key: string; x: number; y: number; width: number; height: number; page_num: number; field_type?: string; is_signature?: boolean; is_initial?: boolean; required?: boolean }) => {
+      map[row.field_key] = {
+        x: row.x, y: row.y,
+        width: row.width || 100,
+        height: row.height || 16,
+        page_num: row.page_num || 1,
+        field_type: row.field_type,
+        is_signature: row.is_signature,
+        is_initial: row.is_initial,
+        required: row.required,
+      }
+    })
+    setCoordinates(map)
+
+    if (!formConfig.predefinedFields) {
+      const ff: FreeformField[] = data.map((row: { field_key: string; field_type?: string; page_num: number; is_signature?: boolean; is_initial?: boolean; required?: boolean }) => ({
+        field_key: row.field_key,
+        label: row.field_key.replace(/_/g, ' '),
+        type: row.field_type || 'text',
+        page: row.page_num,
+        is_signature: !!row.is_signature,
+        is_initial: !!row.is_initial,
+        required: !!row.required,
+      }))
+      setFreeformFields(ff)
     }
   }, [formSlug, formConfig.predefinedFields])
 
@@ -247,6 +278,7 @@ export default function MapperPage() {
     setSelectedField(null)
     setCoordinates({})
     setFreeformFields([])
+    setDbError(null)
     loadCoords()
     checkOriginalPdf()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -267,7 +299,6 @@ export default function MapperPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, formSlug])
 
-  // ─── Coordinate math ──────────────────────────────────────────────────────
   function getImgBounds() {
     return imgRef.current?.getBoundingClientRect() ?? null
   }
@@ -296,7 +327,6 @@ export default function MapperPage() {
     }
   }
 
-  // ─── Save field rectangle ─────────────────────────────────────────────────
   async function saveFieldRect(
     key: string,
     x: number, y: number, width: number, height: number,
@@ -348,7 +378,6 @@ export default function MapperPage() {
     if (type !== 'info') setTimeout(() => setMessage(''), 3000)
   }
 
-  // ─── Mouse handlers ───────────────────────────────────────────────────────
   function getRelativePos(e: React.MouseEvent, bounds: DOMRect) {
     return {
       x: Math.max(0, Math.min(e.clientX - bounds.left, bounds.width)),
@@ -357,7 +386,6 @@ export default function MapperPage() {
   }
 
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    // For predefined forms: need a selected field. For free-form: always allow drawing
     if (!imgLoaded) return
     if (formConfig.predefinedFields && !selectedField) return
     const bounds = getImgBounds()
@@ -398,10 +426,8 @@ export default function MapperPage() {
     const pdfRect = screenToPdfRect(left, top, right, bottom, bounds)
 
     if (formConfig.predefinedFields && selectedField) {
-      // Predefined mode: save immediately to selected field
       await saveFieldRect(selectedField, pdfRect.x, pdfRect.y, pdfRect.width, pdfRect.height)
     } else {
-      // Free-form mode: show modal to name the field
       setPendingRect(pdfRect)
       setShowDrawModal(true)
     }
@@ -410,7 +436,6 @@ export default function MapperPage() {
   async function handleModalSave(name: string, type: string, isSignature: boolean, isInitial: boolean, required: boolean) {
     if (!pendingRect) return
     setShowDrawModal(false)
-
     const newField: FreeformField = {
       field_key: name,
       label: name.replace(/_/g, ' '),
@@ -425,7 +450,6 @@ export default function MapperPage() {
     setPendingRect(null)
   }
 
-  // ─── PDF upload & bake ────────────────────────────────────────────────────
   async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -451,7 +475,6 @@ export default function MapperPage() {
     setBaking(false)
   }
 
-  // ─── Stats ────────────────────────────────────────────────────────────────
   const totalFieldsSeller = sellerFields.length
   const mappedCount = Object.keys(coordinates).length
   const totalForProgress = formConfig.predefinedFields ? totalFieldsSeller : Math.max(mappedCount, 1)
@@ -478,18 +501,19 @@ export default function MapperPage() {
 
   const selectedFieldDef = formConfig.predefinedFields
     ? sellerFields.find(f => f.key === selectedField)
-    : freeformFields.find(f => f.field_key === selectedField)
+    : effectiveFreeformFields.find(f => f.field_key === selectedField)
 
-  // All fields for overlay (current page, matching coords)
+  // ── Overlay: derive directly from coordinates for current page ─────────────
+  // This works for BOTH modes and doesn't depend on freeformFields being loaded
   const overlayFields: { key: string; type: string }[] = formConfig.predefinedFields
     ? pageSellerFields.filter(f => coordinates[f.key]).map(f => ({ key: f.key, type: f.type }))
-    : pageFreeformFields.filter(f => coordinates[f.field_key]).map(f => ({ key: f.field_key, type: f.type }))
+    : Object.entries(coordinates)
+        .filter(([, coord]) => coord.page_num === currentPage)
+        .map(([key, coord]) => ({ key, type: coord.field_type || 'text' }))
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
 
-      {/* Draw Modal */}
       {showDrawModal && (
         <DrawModal
           pageNum={currentPage}
@@ -526,11 +550,21 @@ export default function MapperPage() {
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center justify-between mb-1">
             <h1 className="text-base font-bold text-white">PDF Field Mapper</h1>
-            <span className="text-xs text-gray-400 font-mono">{mappedCount}{formConfig.predefinedFields ? `/${totalFieldsSeller}` : ' fields'}</span>
+            <span className="text-xs text-gray-400 font-mono">
+              {loading ? '…' : mappedCount}{formConfig.predefinedFields ? `/${totalFieldsSeller}` : ' fields'}
+            </span>
           </div>
           <p className="text-xs text-gray-500 mb-3">
             {formConfig.predefinedFields ? 'Select a field, then draw on PDF' : 'Draw a box on the PDF to add fields'}
           </p>
+
+          {/* DB Error banner */}
+          {dbError && (
+            <div className="flex items-start gap-2 bg-red-950 border border-red-800 rounded-xl p-2.5 mb-3">
+              <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-red-300 leading-snug">{dbError}</p>
+            </div>
+          )}
 
           {formConfig.predefinedFields && (
             <div className="w-full bg-gray-700 rounded-full h-1.5 mb-3">
@@ -541,7 +575,6 @@ export default function MapperPage() {
             </div>
           )}
 
-          {/* Upload + Bake */}
           <div className="space-y-2">
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -584,7 +617,7 @@ export default function MapperPage() {
             {Array.from({ length: formConfig.totalPages }, (_, i) => i + 1).map(p => {
               const pFields = formConfig.predefinedFields
                 ? sellerFields.filter(f => f.page === p)
-                : freeformFields.filter(f => f.page === p)
+                : effectiveFreeformFields.filter(f => f.page === p)
               const pMapped = formConfig.predefinedFields
                 ? pFields.filter(f => coordinates[(f as typeof sellerFields[0]).key]).length
                 : pFields.filter(f => coordinates[(f as FreeformField).field_key]).length
@@ -654,9 +687,14 @@ export default function MapperPage() {
 
         {/* Field List */}
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-          {filteredFields.length === 0 && (
-            <div className="text-center text-gray-600 text-xs py-8">
-              {formConfig.predefinedFields ? 'No fields match filters' : 'No fields mapped on this page yet.\nDraw a box on the PDF to add one.'}
+          {loading && (
+            <div className="text-center text-gray-500 text-xs py-6">Loading fields…</div>
+          )}
+          {!loading && filteredFields.length === 0 && !dbError && (
+            <div className="text-center text-gray-600 text-xs py-8 whitespace-pre-line">
+              {formConfig.predefinedFields
+                ? 'No fields match filters'
+                : 'No fields mapped on this page yet.\nDraw a box on the PDF to add one.'}
             </div>
           )}
           {filteredFields.map(field => {
@@ -707,7 +745,6 @@ export default function MapperPage() {
           })}
         </div>
 
-        {/* Selected Field Hint */}
         {selectedFieldDef && (
           <div className="p-3 border-t border-gray-800">
             <div className="bg-indigo-950 border border-indigo-800 rounded-xl p-3">
@@ -736,8 +773,6 @@ export default function MapperPage() {
 
       {/* ── PDF Viewer ── */}
       <div className="flex-1 flex flex-col bg-gray-950 overflow-hidden">
-
-        {/* Toolbar */}
         <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-2">
             <button
@@ -770,7 +805,6 @@ export default function MapperPage() {
             </button>
           </div>
 
-          {/* Legend */}
           <div className="flex items-center gap-3 text-xs">
             {Object.entries(FIELD_TYPE_COLORS).map(([type, color]) => (
               <span key={type} className="flex items-center gap-1 text-gray-400">
@@ -781,7 +815,6 @@ export default function MapperPage() {
           </div>
         </div>
 
-        {/* PDF + Overlay */}
         <div className="flex-1 overflow-auto flex items-start justify-center p-6">
           <div
             className="relative inline-block"
@@ -810,7 +843,6 @@ export default function MapperPage() {
                 onMouseUp={onMouseUp}
                 onMouseLeave={onMouseUp}
               >
-                {/* Live draw preview */}
                 {drawPreview && (
                   <div
                     className="absolute border-2 border-dashed border-white bg-white/10 pointer-events-none"
@@ -821,7 +853,6 @@ export default function MapperPage() {
                   />
                 )}
 
-                {/* Saved field overlays */}
                 {overlayFields.map(({ key, type }) => {
                   const coord = coordinates[key]
                   if (!coord) return null
