@@ -4,16 +4,19 @@ import { MissingField } from '@/lib/compliance/types';
 
 interface Props {
   pdfFile?: File | null;
+  /** Load PDF from a URL instead of a File (used by library preview) */
+  pdfUrl?: string | null;
   currentPage: number;
   totalPages: number;
   missingFields: MissingField[];
   onPageChange: (page: number) => void;
+  /** Called when a PDF is loaded from pdfUrl with the actual page count */
+  onTotalPagesLoaded?: (n: number) => void;
 }
 
 const PDF_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
 async function loadPdfJs() {
-  // Dynamic import to avoid SSR issues
   const mod = await import('pdfjs-dist');
   if (!mod.GlobalWorkerOptions.workerSrc) {
     mod.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN;
@@ -21,7 +24,6 @@ async function loadPdfJs() {
   return mod;
 }
 
-// ─── Mock fallback (used when no real PDF is uploaded) ───────────────────────
 function drawMockPDFPage(canvas: HTMLCanvasElement | null, page: number) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -76,36 +78,53 @@ function drawMockPDFPage(canvas: HTMLCanvasElement | null, page: number) {
   ctx.fillText('Initials _______', W / 2 + 8, H - 16);
 }
 
-const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingFields, onPageChange }) => {
+const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, missingFields, onPageChange, onTotalPagesLoaded }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
+  const [docLabel, setDocLabel] = useState<string>('');
 
-  // ── Load PDF document when file changes ──────────────────────────────────
+  // ── Load PDF document when file or URL changes ────────────────────────────
   useEffect(() => {
-    if (!pdfFile) {
+    if (!pdfFile && !pdfUrl) {
       setPdfDoc(null);
+      setDocLabel('');
       setRenderError(null);
       return;
     }
     let cancelled = false;
     setRenderError(null);
+    setDocLabel(pdfFile ? pdfFile.name : (pdfUrl ?? ''));
+
     (async () => {
       try {
         const pdfjsLib = await loadPdfJs();
-        const arrayBuffer = await pdfFile.arrayBuffer();
-        const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        if (!cancelled) setPdfDoc(doc);
+        let doc;
+        if (pdfFile) {
+          const arrayBuffer = await pdfFile.arrayBuffer();
+          doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        } else if (pdfUrl) {
+          // Fetch the PDF from the URL
+          const res = await fetch(pdfUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const arrayBuffer = await res.arrayBuffer();
+          doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          if (!cancelled && onTotalPagesLoaded) {
+            onTotalPagesLoaded(doc.numPages);
+          }
+        }
+        if (!cancelled && doc) setPdfDoc(doc);
       } catch (err) {
         console.error('PDF load error', err);
-        if (!cancelled) setRenderError('Could not read this PDF. Please check the file and try again.');
+        if (!cancelled) setRenderError('Could not load this PDF. Please check the file and try again.');
       }
     })();
     return () => { cancelled = true; };
-  }, [pdfFile]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfFile, pdfUrl]);
 
   // ── Render the current page ───────────────────────────────────────────────
   const renderPage = useCallback(async () => {
@@ -113,7 +132,6 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
     if (!canvas) return;
 
     if (!pdfDoc) {
-      // Use mock drawing as placeholder
       canvas.width = 520;
       canvas.height = 674;
       drawMockPDFPage(canvas, currentPage);
@@ -125,13 +143,11 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
       const page = await pdfDoc.getPage(currentPage);
       const containerWidth = containerRef.current?.clientWidth ?? 520;
       const baseViewport = page.getViewport({ scale: 1 });
-      // Scale to fit container width (max 580px), with device pixel ratio for sharpness
       const scale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const viewport = page.getViewport({ scale: scale * dpr });
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      // Display at CSS size (without dpr multiplication)
       canvas.style.width = `${viewport.width / dpr}px`;
       canvas.style.height = `${viewport.height / dpr}px`;
       const ctx = canvas.getContext('2d');
@@ -149,6 +165,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
   useEffect(() => { renderPage(); }, [renderPage]);
 
   const pageMissing = missingFields.filter(f => f.page === currentPage);
+  const effectiveTotalPages = pdfDoc ? pdfDoc.numPages : totalPages;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#e5e7eb' }}>
@@ -159,15 +176,20 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
           </svg>
           <span style={{ fontSize: 13, fontWeight: 500, color: '#6b7280' }}>
-            {pdfFile ? pdfFile.name : 'No PDF uploaded · showing mock preview'}
+            {docLabel || (pdfFile ? pdfFile.name : pdfUrl ? pdfUrl.split('/').pop() : 'No PDF · mock preview')}
           </span>
           {rendering && <span style={{ fontSize: 11, color: '#93c5fd' }}>Rendering…</span>}
         </div>
-        {pageMissing.length > 0 && (
-          <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fee2e2', color: '#dc2626' }}>
-            {pageMissing.length} issue{pageMissing.length !== 1 ? 's' : ''} on this page
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {pageMissing.length > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fee2e2', color: '#dc2626' }}>
+              {pageMissing.length} issue{pageMissing.length !== 1 ? 's' : ''} on this page
+            </span>
+          )}
+          {pdfUrl && (
+            <a href={pdfUrl} download target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', padding: '2px 8px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff' }}>⬇ Download</a>
+          )}
+        </div>
       </div>
 
       {/* ── Error banner ── */}
@@ -186,7 +208,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
             height={674}
             style={{ display: 'block', width: '100%', maxWidth: 580 }}
           />
-          {/* Red box overlay — uses same percentage coords as missingFields */}
+          {/* Red box overlay */}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             {pageMissing.map(field => {
               const label = field.type === 'initial' ? 'INI' : 'SIG';
@@ -236,8 +258,8 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
           disabled={currentPage <= 1}
           onClick={() => onPageChange(currentPage - 1)}
         >←</button>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => {
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 }}>
+          {Array.from({ length: effectiveTotalPages }, (_, i) => i + 1).map(p => {
             const hasMissing = missingFields.some(f => f.page === p);
             return (
               <button
@@ -254,8 +276,8 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, currentPage, totalPages, missingF
           })}
         </div>
         <button
-          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage >= totalPages ? '#f9fafb' : '#fff', color: currentPage >= totalPages ? '#d1d5db' : '#374151', cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer', fontSize: 13 }}
-          disabled={currentPage >= totalPages}
+          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage >= effectiveTotalPages ? '#f9fafb' : '#fff', color: currentPage >= effectiveTotalPages ? '#d1d5db' : '#374151', cursor: currentPage >= effectiveTotalPages ? 'not-allowed' : 'pointer', fontSize: 13 }}
+          disabled={currentPage >= effectiveTotalPages}
           onClick={() => onPageChange(currentPage + 1)}
         >→</button>
       </div>

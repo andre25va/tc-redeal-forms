@@ -63,6 +63,8 @@ export interface FormTemplate {
   requiredInitials: number;
   parties: PartyRole[];
   conditionalTriggers?: FieldTrigger[];
+  /** Public URL to a blank/clean PDF for library preview */
+  pdfUrl?: string;
 }
 
 export interface MlsBoard {

@@ -2,7 +2,8 @@
 import React, { useState } from 'react';
 import { MlsBoard, FormTemplate, PartyRole, FieldTrigger } from '@/lib/compliance/types';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
-import { FileText, PenLine, Fingerprint, ChevronDown, ChevronRight, AlertTriangle, ArrowRight } from 'lucide-react';
+import { FileText, PenLine, Fingerprint, ChevronDown, ChevronRight, AlertTriangle, ArrowRight, Eye, X } from 'lucide-react';
+import PDFViewer from './PDFViewer';
 
 const ROLE_COLORS: Record<PartyRole, string> = {
   buyer:  'bg-blue-100 text-blue-700',
@@ -59,19 +60,27 @@ const TriggerRow: React.FC<{ trigger: FieldTrigger; onToggle: () => void }> = ({
   </div>
 );
 
-const FormRow: React.FC<{ form: FormTemplate; isExpanded: boolean; onToggle: () => void; onTriggerToggle: (id: string) => void }> = ({ form, isExpanded, onToggle, onTriggerToggle }) => {
+const FormRow: React.FC<{
+  form: FormTemplate;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onTriggerToggle: (id: string) => void;
+  onPreviewPdf: () => void;
+}> = ({ form, isExpanded, onToggle, onTriggerToggle, onPreviewPdf }) => {
   const enabledCount = (form.conditionalTriggers ?? []).filter(t => t.enabled).length;
   const totalCount = (form.conditionalTriggers ?? []).length;
   return (
     <div style={{ borderTop: '1px solid #f3f4f6' }}>
-      <button
-        onClick={onToggle}
-        style={{ width: '100%', display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', alignItems: 'center', gap: 12, padding: '12px 16px', background: isExpanded ? '#f8faff' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-      >
-        <div>
-          <p style={{ fontSize: 14, fontWeight: 500, color: '#1f2937', margin: 0 }}>{form.formName}</p>
-          <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>{form.version} · {form.pages}pp</p>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto auto', alignItems: 'center', gap: 12, padding: '12px 16px', background: isExpanded ? '#f8faff' : 'transparent' }}>
+        <button
+          onClick={onToggle}
+          style={{ display: 'contents', cursor: 'pointer', background: 'none', border: 'none', textAlign: 'left' }}
+        >
+          <div>
+            <p style={{ fontSize: 14, fontWeight: 500, color: '#1f2937', margin: 0 }}>{form.formName}</p>
+            <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>{form.version} · {form.pages}pp</p>
+          </div>
+        </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#4b5563' }}><PenLine size={11} color="#f87171" />{form.requiredSignatures}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#4b5563' }}><Fingerprint size={11} color="#fbbf24" />{form.requiredInitials}</span>
@@ -86,8 +95,21 @@ const FormRow: React.FC<{ form: FormTemplate; isExpanded: boolean; onToggle: () 
             <AlertTriangle size={10} />{enabledCount}/{totalCount} rules
           </span>
         ) : <span style={{ fontSize: 11, color: '#e5e7eb' }}>—</span>}
-        {totalCount > 0 ? (isExpanded ? <ChevronDown size={14} color="#9ca3af" /> : <ChevronRight size={14} color="#d1d5db" />) : <span style={{ width: 14 }} />}
-      </button>
+        {/* View PDF button */}
+        {form.pdfUrl ? (
+          <button
+            onClick={onPreviewPdf}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 6, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            <Eye size={11} /> View PDF
+          </button>
+        ) : <span style={{ width: 70 }} />}
+        {totalCount > 0 ? (
+          <button onClick={onToggle} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}>
+            {isExpanded ? <ChevronDown size={14} color="#9ca3af" /> : <ChevronRight size={14} color="#d1d5db" />}
+          </button>
+        ) : <span style={{ width: 14 }} />}
+      </div>
       {isExpanded && totalCount > 0 && (
         <div style={{ padding: '0 16px 14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', margin: '0 0 6px' }}>Conditional Rules — when detected, these forms are also required</p>
@@ -133,6 +155,9 @@ export default function LibraryView() {
   const [selectedId, setSelectedId] = useState<string>(MLS_LIBRARY[0].id);
   const [expandedFormId, setExpandedFormId] = useState<string | null>(null);
   const [filterState, setFilterState] = useState<string>('');
+  const [previewPdf, setPreviewPdf] = useState<{ url: string; formName: string; pages: number } | null>(null);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewTotalPages, setPreviewTotalPages] = useState(1);
 
   const board = library.find(b => b.id === selectedId) ?? library[0];
   const sc = STATE_COLORS[board.state] ?? DEFAULT_STATE_COLOR;
@@ -150,9 +175,17 @@ export default function LibraryView() {
     }));
   }
 
+  function openPreview(form: FormTemplate) {
+    if (!form.pdfUrl) return;
+    setPreviewPdf({ url: form.pdfUrl, formName: form.formName, pages: form.pages });
+    setPreviewPage(1);
+    setPreviewTotalPages(form.pages);
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: '#f9fafb' }}>
-      <div style={{ width: 280, flexShrink: 0, borderRight: '1px solid #e5e7eb', background: '#ffffff', overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* ── Left: MLS board list ── */}
+      <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid #e5e7eb', background: '#ffffff', overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ marginBottom: 4 }}>
           <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', margin: 0 }}>MLS Boards</p>
           <p style={{ fontSize: 11, color: '#d1d5db', margin: '2px 0 8px' }}>{library.length} boards in library</p>
@@ -162,12 +195,13 @@ export default function LibraryView() {
           </select>
         </div>
         {filteredBoards.map(b => (
-          <MlsCard key={b.id} board={b} isSelected={b.id === selectedId} onClick={() => { setSelectedId(b.id); setExpandedFormId(null); }} />
+          <MlsCard key={b.id} board={b} isSelected={b.id === selectedId} onClick={() => { setSelectedId(b.id); setExpandedFormId(null); setPreviewPdf(null); }} />
         ))}
         {filteredBoards.length === 0 && <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>No boards for {filterState}</p>}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+      {/* ── Middle: form list (shrinks when PDF preview open) ── */}
+      <div style={{ flex: previewPdf ? '0 0 440px' : 1, overflowY: 'auto', padding: 24, borderRight: previewPdf ? '1px solid #e5e7eb' : 'none', minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
@@ -179,7 +213,7 @@ export default function LibraryView() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
             {[{ label: 'Forms', value: board.forms.length, color: '#1f2937' }, { label: 'Total Sigs', value: board.forms.reduce((s, f) => s + f.requiredSignatures, 0), color: '#ef4444' }, { label: 'Total Initials', value: board.forms.reduce((s, f) => s + f.requiredInitials, 0), color: '#f59e0b' }, { label: 'Active Rules', value: totalTriggers, color: '#d97706' }].map(stat => (
               <div key={stat.label} style={{ textAlign: 'center' }}>
-                <p style={{ fontSize: 24, fontWeight: 700, color: stat.color, margin: 0 }}>{stat.value}</p>
+                <p style={{ fontSize: 22, fontWeight: 700, color: stat.color, margin: 0 }}>{stat.value}</p>
                 <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{stat.label}</p>
               </div>
             ))}
@@ -187,21 +221,56 @@ export default function LibraryView() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f3f4f6' }}>
           <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>Conditional Rules:</span>
-          <span style={{ fontSize: 11, color: '#92400e' }}>☑ Enabled — system will flag missing addenda when condition is detected</span>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>☐ Disabled — rule exists but won't trigger alerts</span>
+          <span style={{ fontSize: 11, color: '#92400e' }}>☑ Enabled — system will flag missing addenda</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>☐ Disabled — rule won't trigger alerts</span>
         </div>
         <div style={{ background: '#ffffff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', alignItems: 'center', padding: '10px 16px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', gap: 12 }}>
-            {['Form', 'Sig / Init', 'Parties', 'Conditional Rules', ''].map(h => (
-              <span key={h} style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto auto', alignItems: 'center', padding: '10px 16px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', gap: 12 }}>
+            {['Form', 'Sig / Init', 'Parties', 'Conditional Rules', '', ''].map((h, i) => (
+              <span key={i} style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
             ))}
           </div>
           {board.forms.map(form => (
-            <FormRow key={form.id} form={form} isExpanded={expandedFormId === form.id} onToggle={() => setExpandedFormId(expandedFormId === form.id ? null : form.id)} onTriggerToggle={(triggerId) => handleTriggerToggle(form.id, triggerId)} />
+            <FormRow
+              key={form.id}
+              form={form}
+              isExpanded={expandedFormId === form.id}
+              onToggle={() => setExpandedFormId(expandedFormId === form.id ? null : form.id)}
+              onTriggerToggle={(triggerId) => handleTriggerToggle(form.id, triggerId)}
+              onPreviewPdf={() => openPreview(form)}
+            />
           ))}
         </div>
         <p style={{ fontSize: 11, color: '#d1d5db', textAlign: 'center', marginTop: 16 }}>Field-level registry (coordinates, required flags, field IDs) stored in Supabase · field_coordinates table</p>
       </div>
+
+      {/* ── Right: PDF preview panel ── */}
+      {previewPdf && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#f8faff', borderBottom: '1px solid #dbeafe', flexShrink: 0 }}>
+            <div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>{previewPdf.formName}</span>
+              <span style={{ fontSize: 11, color: '#93c5fd', marginLeft: 8 }}>Library copy — blank</span>
+            </div>
+            <button
+              onClick={() => setPreviewPdf(null)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer', fontSize: 12, color: '#6b7280' }}
+            >
+              <X size={12} /> Close
+            </button>
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <PDFViewer
+              pdfUrl={previewPdf.url}
+              currentPage={previewPage}
+              totalPages={previewTotalPages}
+              missingFields={[]}
+              onPageChange={setPreviewPage}
+              onTotalPagesLoaded={(n) => setPreviewTotalPages(n)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
