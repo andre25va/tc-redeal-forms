@@ -4,24 +4,33 @@ import { MissingField } from '@/lib/compliance/types';
 
 interface Props {
   pdfFile?: File | null;
-  /** Load PDF from a URL instead of a File (used by library preview) */
   pdfUrl?: string | null;
   currentPage: number;
   totalPages: number;
   missingFields: MissingField[];
   onPageChange: (page: number) => void;
-  /** Called when a PDF is loaded from pdfUrl with the actual page count */
   onTotalPagesLoaded?: (n: number) => void;
 }
 
+const PDFJS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
 const PDF_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-async function loadPdfJs() {
-  const mod = await import('pdfjs-dist');
-  if (!mod.GlobalWorkerOptions.workerSrc) {
-    mod.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN;
-  }
-  return mod;
+// Load pdfjs from CDN at runtime — completely bypasses webpack/canvas issues
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadPdfJs(): Promise<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win = window as any;
+  if (win.pdfjsLib) return win.pdfjsLib;
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = PDFJS_CDN;
+    script.onload = () => {
+      win.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN;
+      resolve(win.pdfjsLib);
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
 }
 
 function drawMockPDFPage(canvas: HTMLCanvasElement | null, page: number) {
@@ -87,7 +96,6 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
   const [rendering, setRendering] = useState(false);
   const [docLabel, setDocLabel] = useState<string>('');
 
-  // ── Load PDF document when file or URL changes ────────────────────────────
   useEffect(() => {
     if (!pdfFile && !pdfUrl) {
       setPdfDoc(null);
@@ -107,37 +115,31 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
           const arrayBuffer = await pdfFile.arrayBuffer();
           doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         } else if (pdfUrl) {
-          // Fetch the PDF from the URL
           const res = await fetch(pdfUrl);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const arrayBuffer = await res.arrayBuffer();
           doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          if (!cancelled && onTotalPagesLoaded) {
-            onTotalPagesLoaded(doc.numPages);
-          }
+          if (!cancelled && onTotalPagesLoaded) onTotalPagesLoaded(doc.numPages);
         }
         if (!cancelled && doc) setPdfDoc(doc);
       } catch (err) {
         console.error('PDF load error', err);
-        if (!cancelled) setRenderError('Could not load this PDF. Please check the file and try again.');
+        if (!cancelled) setRenderError('Could not load PDF. Please check the file and try again.');
       }
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfFile, pdfUrl]);
 
-  // ── Render the current page ───────────────────────────────────────────────
   const renderPage = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     if (!pdfDoc) {
       canvas.width = 520;
       canvas.height = 674;
       drawMockPDFPage(canvas, currentPage);
       return;
     }
-
     try {
       setRendering(true);
       const page = await pdfDoc.getPage(currentPage);
@@ -169,7 +171,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#e5e7eb' }}>
-      {/* ── Header bar ── */}
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#f3f4f6', borderBottom: '1px solid #d1d5db', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <svg style={{ width: 16, height: 16, color: '#6b7280' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -187,60 +189,44 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
             </span>
           )}
           {pdfUrl && (
-            <a href={pdfUrl} download target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', padding: '2px 8px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff' }}>⬇ Download</a>
+            <a href={pdfUrl} download target="_blank" rel="noreferrer"
+              style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', padding: '2px 8px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff' }}
+            >⬇ Download</a>
           )}
         </div>
       </div>
 
-      {/* ── Error banner ── */}
+      {/* Error */}
       {renderError && (
         <div style={{ padding: '8px 16px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 13, color: '#dc2626' }}>
           ⚠ {renderError}
         </div>
       )}
 
-      {/* ── PDF canvas + overlay ── */}
+      {/* Canvas + overlay */}
       <div ref={containerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}>
         <div style={{ position: 'relative', boxShadow: '0 10px 40px rgba(0,0,0,0.15)', borderRadius: 2, overflow: 'visible', display: 'inline-block' }}>
-          <canvas
-            ref={canvasRef}
-            width={520}
-            height={674}
-            style={{ display: 'block', width: '100%', maxWidth: 580 }}
-          />
-          {/* Red box overlay */}
+          <canvas ref={canvasRef} width={520} height={674} style={{ display: 'block', width: '100%', maxWidth: 580 }} />
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             {pageMissing.map(field => {
               const label = field.type === 'initial' ? 'INI' : 'SIG';
               return (
-                <div
-                  key={field.fieldId}
-                  style={{
-                    position: 'absolute',
-                    left: `${field.x}%`,
-                    top: `${field.y}%`,
-                    width: `${field.w}%`,
-                    height: `${field.h}%`,
-                    border: '2px solid #ef4444',
-                    background: 'rgba(239,68,68,0.13)',
-                    boxSizing: 'border-box',
-                  }}
-                >
+                <div key={field.fieldId} style={{
+                  position: 'absolute',
+                  left: `${field.x}%`,
+                  top: `${field.y}%`,
+                  width: `${field.w}%`,
+                  height: `${field.h}%`,
+                  border: '2px solid #ef4444',
+                  background: 'rgba(239,68,68,0.13)',
+                  boxSizing: 'border-box',
+                }}>
                   <span style={{
-                    position: 'absolute',
-                    top: -18,
-                    left: 0,
-                    fontSize: 9,
-                    fontWeight: 700,
-                    fontFamily: 'monospace',
-                    background: '#ef4444',
-                    color: '#fff',
-                    padding: '1px 4px',
-                    borderRadius: '2px 2px 0 0',
-                    whiteSpace: 'nowrap',
-                    maxWidth: 120,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    position: 'absolute', top: -18, left: 0,
+                    fontSize: 9, fontWeight: 700, fontFamily: 'monospace',
+                    background: '#ef4444', color: '#fff',
+                    padding: '1px 4px', borderRadius: '2px 2px 0 0',
+                    whiteSpace: 'nowrap', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
                     {label}: {field.fieldId}
                   </span>
@@ -251,34 +237,27 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
         </div>
       </div>
 
-      {/* ── Page navigation ── */}
+      {/* Page nav */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', background: '#f3f4f6', borderTop: '1px solid #d1d5db', flexShrink: 0 }}>
         <button
           style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage <= 1 ? '#f9fafb' : '#fff', color: currentPage <= 1 ? '#d1d5db' : '#374151', cursor: currentPage <= 1 ? 'not-allowed' : 'pointer', fontSize: 13 }}
-          disabled={currentPage <= 1}
-          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)}
         >←</button>
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 }}>
           {Array.from({ length: effectiveTotalPages }, (_, i) => i + 1).map(p => {
             const hasMissing = missingFields.some(f => f.page === p);
             return (
-              <button
-                key={p}
-                onClick={() => onPageChange(p)}
-                style={{
-                  width: 28, height: 28, borderRadius: 6, fontSize: 11, fontWeight: 600,
-                  cursor: 'pointer', border: 'none',
-                  background: p === currentPage ? '#3b82f6' : hasMissing ? '#fee2e2' : '#e5e7eb',
-                  color: p === currentPage ? '#fff' : hasMissing ? '#dc2626' : '#6b7280',
-                }}
-              >{p}</button>
+              <button key={p} onClick={() => onPageChange(p)} style={{
+                width: 28, height: 28, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
+                background: p === currentPage ? '#3b82f6' : hasMissing ? '#fee2e2' : '#e5e7eb',
+                color: p === currentPage ? '#fff' : hasMissing ? '#dc2626' : '#6b7280',
+              }}>{p}</button>
             );
           })}
         </div>
         <button
           style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage >= effectiveTotalPages ? '#f9fafb' : '#fff', color: currentPage >= effectiveTotalPages ? '#d1d5db' : '#374151', cursor: currentPage >= effectiveTotalPages ? 'not-allowed' : 'pointer', fontSize: 13 }}
-          disabled={currentPage >= effectiveTotalPages}
-          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage >= effectiveTotalPages} onClick={() => onPageChange(currentPage + 1)}
         >→</button>
       </div>
     </div>
