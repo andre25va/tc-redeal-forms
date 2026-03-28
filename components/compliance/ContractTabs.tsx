@@ -44,10 +44,12 @@ const ContractTabs: React.FC<Props> = ({ contracts, activeId, onSelect }) => {
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '8px 12px', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap',
+                borderTop: 'none',
+                borderLeft: 'none',
+                borderRight: 'none',
                 borderBottom: `2px solid ${isActive ? '#3b82f6' : 'transparent'}`,
                 color: isActive ? '#2563eb' : '#6b7280',
                 background: isActive ? '#eff6ff' : 'transparent',
-                border: 'none', borderBottom: `2px solid ${isActive ? '#3b82f6' : 'transparent'}`,
                 cursor: 'pointer',
               }}
             >
