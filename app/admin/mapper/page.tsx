@@ -12,7 +12,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// ─── pdf.js CDN loader (same approach as compliance viewer) ──────────────────
+// ─── pdf.js CDN loader ──────────────────────────────────────────────────────
 const PDFJS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'
 const PDF_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
 
@@ -37,12 +37,14 @@ async function loadPdfJs(): Promise<any> {
 const FORMS = {
   'seller-disclosure': {
     label: 'Seller Disclosure Addendum',
+    shortLabel: 'Seller Disclosure',
     totalPages: 8,
     pdfPath: '/library/seller-disclosure-blank.pdf',
     predefinedFields: true,
   },
   'residential-sale-contract': {
     label: 'Residential Sale Contract',
+    shortLabel: 'Sale Contract',
     totalPages: 16,
     pdfPath: '/library/residential-sale-contract-blank.pdf',
     predefinedFields: false,
@@ -198,10 +200,11 @@ export default function MapperPage() {
   const [messageType, setMessageType] = useState<'ok' | 'err' | 'info'>('ok')
   const [baking, setBaking] = useState(false)
   const [originalUploaded, setOriginalUploaded] = useState(false)
-  const [pageReady, setPageReady] = useState(false)       // replaces imgLoaded
+  const [pageReady, setPageReady] = useState(false)
   const [rendering, setRendering] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showFieldIds, setShowFieldIds] = useState(true)
 
   // pdf.js state
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,10 +217,9 @@ export default function MapperPage() {
   const [pendingRect, setPendingRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const [showDrawModal, setShowDrawModal] = useState(false)
 
-  // Use refs for drawing state so document listeners can access current values
   const isDrawingRef = useRef(false)
   const drawStartRef = useRef<{ x: number; y: number } | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)       // replaces imgRef
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -226,12 +228,10 @@ export default function MapperPage() {
   const formConfigRef = useRef(formConfig)
   const currentPageRef = useRef(currentPage)
 
-  // Keep refs in sync
   useEffect(() => { selectedFieldRef.current = selectedField }, [selectedField])
   useEffect(() => { formConfigRef.current = formConfig }, [formConfig])
   useEffect(() => { currentPageRef.current = currentPage }, [currentPage])
 
-  // Derived field lists
   const sellerFields = SELLER_DISCLOSURE_FIELDS
   const pageSellerFields = sellerFields.filter(f => f.page === currentPage)
   const allSections = Array.from(new Set(sellerFields.map(f => f.section)))
@@ -251,7 +251,7 @@ export default function MapperPage() {
   const pageFreeformFields = effectiveFreeformFields.filter(f => f.page === currentPage)
   const currentPageFields = formConfig.predefinedFields ? pageSellerFields : pageFreeformFields
 
-  // ─── Load PDF via pdf.js ─────────────────────────────────────────────────
+  // ─── Load PDF ───────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false
     setPdfDoc(null)
@@ -273,7 +273,7 @@ export default function MapperPage() {
     return () => { cancelled = true }
   }, [formConfig.pdfPath])
 
-  // ─── Render current page onto canvas ────────────────────────────────────
+  // ─── Render page onto canvas ─────────────────────────────────────────────
   const renderPage = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas || !pdfDoc) return
@@ -386,7 +386,7 @@ export default function MapperPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, formSlug])
 
-  // ─── Coordinate helpers — use canvas getBoundingClientRect (CSS pixels) ──
+  // ─── Coordinate helpers ──────────────────────────────────────────────────
   function getCanvasBounds() {
     return canvasRef.current?.getBoundingClientRect() ?? null
   }
@@ -394,7 +394,6 @@ export default function MapperPage() {
   function pdfToScreenRect(pdfX: number, pdfY: number, pdfWidth: number, pdfHeight: number) {
     const canvas = canvasRef.current
     if (!canvas) return null
-    // getBoundingClientRect gives CSS pixel dimensions (zoom-adjusted by browser)
     const bounds = canvas.getBoundingClientRect()
     const scaleX = bounds.width / PDF_W
     const scaleY = bounds.height / PDF_H
@@ -469,7 +468,7 @@ export default function MapperPage() {
     if (type !== 'info') setTimeout(() => setMessage(''), 3000)
   }
 
-  // ─── Drawing — document-level events so cursor can leave overlay ──────────
+  // ─── Drawing — document-level events ────────────────────────────────────
   function onOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!pageReady) return
     if (formConfig.predefinedFields && !selectedField) return
@@ -856,6 +855,8 @@ export default function MapperPage() {
                     <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0" />
                   )}
                 </div>
+                {/* Field key shown below label for easy reference */}
+                <p className="text-[9px] text-gray-600 font-mono mt-0.5 truncate pl-8">{key}</p>
               </button>
             )
           })}
@@ -910,6 +911,17 @@ export default function MapperPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFieldIds(v => !v)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                showFieldIds
+                  ? 'bg-indigo-900 border-indigo-600 text-indigo-300'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              {showFieldIds ? 'IDs On' : 'IDs Off'}
+            </button>
+            <div className="w-px h-5 bg-gray-700 mx-1" />
             <button onClick={() => setZoom(z => Math.max(0.5, z - 0.15))} className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700">
               <ZoomOut className="w-4 h-4" />
             </button>
@@ -945,6 +957,18 @@ export default function MapperPage() {
               style={{ maxWidth: '700px' }}
             />
 
+            {/* ── PAGE ID BADGE — always visible for reference ── */}
+            {pageReady && (
+              <div className="absolute bottom-3 left-3 flex items-center gap-1.5 pointer-events-none z-30">
+                <span className="bg-black/80 text-white text-xs font-bold px-2.5 py-1 rounded-lg backdrop-blur-sm border border-white/10 shadow-lg">
+                  Page {currentPage} / {formConfig.totalPages}
+                </span>
+                <span className="bg-indigo-900/90 text-indigo-200 text-[10px] font-semibold px-2 py-1 rounded-lg backdrop-blur-sm border border-indigo-700/50 shadow-lg truncate max-w-[180px]">
+                  {formConfig.shortLabel}
+                </span>
+              </div>
+            )}
+
             {/* Loading overlay while page renders */}
             {!pageReady && (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-800/70 rounded">
@@ -952,14 +976,14 @@ export default function MapperPage() {
               </div>
             )}
 
-            {/* Drawing + field overlay — sits on top of canvas */}
+            {/* Drawing + field overlay */}
             {pageReady && (
               <div
                 ref={overlayRef}
                 className={`absolute inset-0 ${canDraw ? 'cursor-crosshair' : 'cursor-default'}`}
                 onMouseDown={onOverlayMouseDown}
               >
-                {/* Live draw preview rectangle */}
+                {/* Live draw preview */}
                 {drawPreview && (
                   <div
                     className="absolute border-2 border-dashed border-white bg-white/10 pointer-events-none"
@@ -990,14 +1014,21 @@ export default function MapperPage() {
                         borderColor: isSelected ? '#fff' : color,
                         backgroundColor: color + (isSelected ? '40' : '1a'),
                       }}
-                      title={key}
+                      title={`${key}\nx:${Math.round(coord.x)} y:${Math.round(coord.y)} w:${Math.round(coord.width)} h:${Math.round(coord.height)}`}
                     >
-                      <span
-                        className="absolute top-0 left-0 text-[7px] font-bold px-0.5 leading-tight truncate max-w-full pointer-events-none"
-                        style={{ color: isSelected ? '#fff' : color, backgroundColor: 'rgba(0,0,0,0.65)' }}
-                      >
-                        {key.split('_').slice(-2).join('_')}
-                      </span>
+                      {/* Field ID label — full key, toggleable */}
+                      {showFieldIds && (
+                        <span
+                          className="absolute top-0 left-0 text-[8px] font-bold px-1 py-px leading-tight pointer-events-none whitespace-nowrap overflow-hidden"
+                          style={{
+                            color: isSelected ? '#fff' : color,
+                            backgroundColor: 'rgba(0,0,0,0.75)',
+                            maxWidth: '100%',
+                          }}
+                        >
+                          {key}
+                        </span>
+                      )}
                       <button
                         className="absolute -top-2 -right-2 w-4 h-4 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-30"
                         onClick={e => { e.stopPropagation(); resetField(key) }}
