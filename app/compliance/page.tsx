@@ -94,8 +94,8 @@ const MOCK_PACKAGE: TransactionPackage = {
         { fieldId: 'sd_s2_sig_p8',  label: 'Signature', partyLabel: 'Seller 2', party: 'Mary Smith',  page: 8, type: 'signature', x: 20, y: 88, w: 44, h: 5 },
       ],
       firedTriggers: [
-        { triggerId: 'sda-pool',    fieldLabel: 'Pool / Spa present',         requiresFormId: 'crmls-spq',   requiresFormName: 'Pool / Spa Disclosure (SPQ)',     presentInPackage: false },
-        { triggerId: 'sda-pre1978', fieldLabel: 'Home built before 1978',      requiresFormId: 'crmls-lpd',   requiresFormName: 'Lead-Based Paint Disclosure',      presentInPackage: true  },
+        { triggerId: 'sda-pool',    fieldLabel: 'Pool / Spa present',          requiresFormId: 'crmls-spq',   requiresFormName: 'Pool / Spa Disclosure (SPQ)',      presentInPackage: false },
+        { triggerId: 'sda-pre1978', fieldLabel: 'Home built before 1978',       requiresFormId: 'crmls-lpd',   requiresFormName: 'Lead-Based Paint Disclosure',       presentInPackage: true  },
         { triggerId: 'sda-solar',   fieldLabel: 'Solar panels — leased or PPA', requiresFormId: 'crmls-solar', requiresFormName: 'Solar Lease / PPA Addendum (SLPA)', presentInPackage: false },
       ],
     },
@@ -103,11 +103,11 @@ const MOCK_PACKAGE: TransactionPackage = {
       id: 'lead-paint', formName: 'Lead-Based Paint Disclosure', shortName: 'Lead Paint',
       mlsId: 'crmls', templateId: 'crmls-lpd', passed: true, totalPages: 2,
       parties: [
-        { id: 'lp_buyer1',  role: 'buyer',  label: 'Buyer 1',  name: 'Michael Torres',    fields: [{ fieldId: 'lp_b1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 82, w: 44, h: 5 }] },
-        { id: 'lp_buyer2',  role: 'buyer',  label: 'Buyer 2',  name: 'Jennifer Torres',   fields: [{ fieldId: 'lp_b2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 82, w: 44, h: 5 }] },
-        { id: 'lp_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith',        fields: [{ fieldId: 'lp_s1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 90, w: 44, h: 5 }] },
-        { id: 'lp_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith',        fields: [{ fieldId: 'lp_s2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 90, w: 44, h: 5 }] },
-        { id: 'lp_agent1',  role: 'agent',  label: 'Agent 1',  name: 'Rosa Martinez',     fields: [{ fieldId: 'lp_ag1_sig_p2', label: 'Agent Sig — Page 2',  page: 2, type: 'signature', status: 'signed', x: 3,  y: 96, w: 44, h: 5 }] },
+        { id: 'lp_buyer1',  role: 'buyer',  label: 'Buyer 1',  name: 'Michael Torres',  fields: [{ fieldId: 'lp_b1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 82, w: 44, h: 5 }] },
+        { id: 'lp_buyer2',  role: 'buyer',  label: 'Buyer 2',  name: 'Jennifer Torres', fields: [{ fieldId: 'lp_b2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 82, w: 44, h: 5 }] },
+        { id: 'lp_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith',       fields: [{ fieldId: 'lp_s1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 90, w: 44, h: 5 }] },
+        { id: 'lp_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith',       fields: [{ fieldId: 'lp_s2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 90, w: 44, h: 5 }] },
+        { id: 'lp_agent1',  role: 'agent',  label: 'Agent 1',  name: 'Rosa Martinez',    fields: [{ fieldId: 'lp_ag1_sig_p2', label: 'Agent Sig — Page 2',  page: 2, type: 'signature', status: 'signed', x: 3,  y: 96, w: 44, h: 5 }] },
       ],
       missingFields: [],
     },
@@ -172,6 +172,7 @@ export default function CompliancePage() {
   const [pkg, setPkg] = useState<TransactionPackage>(MOCK_PACKAGE);
   const [activeContractId, setActiveContractId] = useState<string>(MOCK_PACKAGE.contracts[0].id);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
 
   const mlsBoard = MLS_LIBRARY.find(b => b.id === pkg.mlsId);
   const totalPackageIssues = pkg.contracts.reduce((sum, c) => {
@@ -195,7 +196,13 @@ export default function CompliancePage() {
   if (view === 'upload') return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
       <NavBar active="upload" />
-      <UploadPanel onAnalyze={(mlsId) => { setPkg({ ...MOCK_PACKAGE, mlsId }); setActiveContractId(MOCK_PACKAGE.contracts[0].id); setCurrentPage(1); setView('report'); }} />
+      <UploadPanel onAnalyze={(mlsId, file) => {
+        setPdfFile(file);
+        setPkg({ ...MOCK_PACKAGE, mlsId, fileName: file.name });
+        setActiveContractId(MOCK_PACKAGE.contracts[0].id);
+        setCurrentPage(1);
+        setView('report');
+      }} />
     </div>
   );
 
@@ -236,6 +243,7 @@ export default function CompliancePage() {
       <ContractTabs contracts={pkg.contracts} activeId={activeContractId} onSelect={(id) => { setActiveContractId(id); setCurrentPage(1); }} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* ── Left sidebar ── */}
         <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid #e5e7eb', overflowY: 'auto', padding: 12, background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ borderRadius: 10, padding: 12, background: totalIssues === 0 ? '#f0fdf4' : '#fff5f5', border: `1px solid ${totalIssues === 0 ? '#bbf7d0' : '#fecaca'}` }}>
             <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: totalIssues === 0 ? '#16a34a' : '#dc2626', margin: 0 }}>
@@ -288,8 +296,15 @@ export default function CompliancePage() {
           )}
         </div>
 
+        {/* ── PDF viewer ── */}
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <PDFViewer currentPage={currentPage} totalPages={contract.totalPages} missingFields={contract.missingFields} onPageChange={setCurrentPage} />
+          <PDFViewer
+            pdfFile={pdfFile}
+            currentPage={currentPage}
+            totalPages={contract.totalPages}
+            missingFields={contract.missingFields}
+            onPageChange={setCurrentPage}
+          />
         </div>
       </div>
     </div>

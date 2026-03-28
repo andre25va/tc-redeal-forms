@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 interface Props {
-  onAnalyze: (mlsId: string) => void;
+  onAnalyze: (mlsId: string, file: File) => void;
 }
 
 const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
@@ -26,10 +26,11 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
   };
 
   const handleAnalyze = () => {
+    if (!file || !selectedMls) return;
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
-      onAnalyze(selectedMls);
+      onAnalyze(selectedMls, file);
     }, 2200);
   };
 
@@ -48,6 +49,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
           <p className="text-gray-400 text-sm">Upload a signed PDF package to verify all signatures and initials</p>
         </div>
 
+        {/* State + MLS selectors */}
         <div className="mb-4">
           <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">State</label>
           <select
@@ -84,6 +86,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
           )}
         </div>
 
+        {/* Drop zone */}
         <div
           className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
             dragging ? 'border-blue-500 bg-blue-50' : file ? 'border-green-400 bg-green-50' : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-blue-50/40'
