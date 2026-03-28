@@ -12,18 +12,39 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
+// ─── pdf.js CDN loader (same approach as compliance viewer) ──────────────────
+const PDFJS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'
+const PDF_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadPdfJs(): Promise<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win = window as any
+  if (win.pdfjsLib) return win.pdfjsLib
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = PDFJS_CDN
+    script.onload = () => {
+      win.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_WORKER_CDN
+      resolve(win.pdfjsLib)
+    }
+    script.onerror = reject
+    document.head.appendChild(script)
+  })
+}
+
 // ─── Form Registry ──────────────────────────────────────────────────────────
 const FORMS = {
   'seller-disclosure': {
     label: 'Seller Disclosure Addendum',
     totalPages: 8,
-    imagePath: (p: number) => `/pdf-pages/seller-disclosure/page-${p}.png`,
+    pdfPath: '/library/seller-disclosure-blank.pdf',
     predefinedFields: true,
   },
   'residential-sale-contract': {
     label: 'Residential Sale Contract',
     totalPages: 16,
-    imagePath: (p: number) => `/pdf-pages/residential-sale-contract/page-${p}.png`,
+    pdfPath: '/library/residential-sale-contract-blank.pdf',
     predefinedFields: false,
   },
 }
@@ -177,9 +198,14 @@ export default function MapperPage() {
   const [messageType, setMessageType] = useState<'ok' | 'err' | 'info'>('ok')
   const [baking, setBaking] = useState(false)
   const [originalUploaded, setOriginalUploaded] = useState(false)
-  const [imgLoaded, setImgLoaded] = useState(false)
+  const [pageReady, setPageReady] = useState(false)       // replaces imgLoaded
+  const [rendering, setRendering] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // pdf.js state
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [pdfDoc, setPdfDoc] = useState<any>(null)
 
   // Drawing state
   const [isDrawing, setIsDrawing] = useState(false)
@@ -191,7 +217,8 @@ export default function MapperPage() {
   // Use refs for drawing state so document listeners can access current values
   const isDrawingRef = useRef(false)
   const drawStartRef = useRef<{ x: number; y: number } | null>(null)
-  const imgRef = useRef<HTMLImageElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)       // replaces imgRef
+  const canvasContainerRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -223,6 +250,60 @@ export default function MapperPage() {
 
   const pageFreeformFields = effectiveFreeformFields.filter(f => f.page === currentPage)
   const currentPageFields = formConfig.predefinedFields ? pageSellerFields : pageFreeformFields
+
+  // ─── Load PDF via pdf.js ─────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    setPdfDoc(null)
+    setPageReady(false)
+
+    ;(async () => {
+      try {
+        const pdfjsLib = await loadPdfJs()
+        const res = await fetch(formConfig.pdfPath)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const arrayBuffer = await res.arrayBuffer()
+        const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        if (!cancelled) setPdfDoc(doc)
+      } catch (err) {
+        console.error('PDF load error', err)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [formConfig.pdfPath])
+
+  // ─── Render current page onto canvas ────────────────────────────────────
+  const renderPage = useCallback(async () => {
+    const canvas = canvasRef.current
+    if (!canvas || !pdfDoc) return
+    try {
+      setRendering(true)
+      setPageReady(false)
+      const page = await pdfDoc.getPage(currentPage)
+      const containerWidth = canvasContainerRef.current?.clientWidth ?? 700
+      const baseViewport = page.getViewport({ scale: 1 })
+      const scale = Math.min((containerWidth - 64) / baseViewport.width, 2.0)
+      const dpr = window.devicePixelRatio || 1
+      const viewport = page.getViewport({ scale: scale * dpr })
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      canvas.style.width = `${viewport.width / dpr}px`
+      canvas.style.height = `${viewport.height / dpr}px`
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      await page.render({ canvasContext: ctx, viewport }).promise
+      setPageReady(true)
+    } catch (err) {
+      console.error('Page render error', err)
+    } finally {
+      setRendering(false)
+    }
+  }, [pdfDoc, currentPage])
+
+  useEffect(() => { renderPage() }, [renderPage])
 
   // ─── Load saved data ─────────────────────────────────────────────────────
   const loadCoords = useCallback(async () => {
@@ -296,7 +377,7 @@ export default function MapperPage() {
   }
 
   useEffect(() => {
-    setImgLoaded(false)
+    setPageReady(false)
     if (formConfig.predefinedFields) {
       const firstUnmapped = pageSellerFields.find(f => !coordinates[f.key])
       if (firstUnmapped) setSelectedField(firstUnmapped.key)
@@ -305,31 +386,32 @@ export default function MapperPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, formSlug])
 
-  function getImgBounds() {
-    return imgRef.current?.getBoundingClientRect() ?? null
-  }
-
-  function screenToPdfRect(left: number, top: number, right: number, bottom: number, bounds: DOMRect) {
-    const scaleX = PDF_W / bounds.width
-    const scaleY = PDF_H / bounds.height
-    return {
-      x: left * scaleX,
-      y: PDF_H - bottom * scaleY,
-      width: (right - left) * scaleX,
-      height: (bottom - top) * scaleY,
-    }
+  // ─── Coordinate helpers — use canvas getBoundingClientRect (CSS pixels) ──
+  function getCanvasBounds() {
+    return canvasRef.current?.getBoundingClientRect() ?? null
   }
 
   function pdfToScreenRect(pdfX: number, pdfY: number, pdfWidth: number, pdfHeight: number) {
-    if (!imgRef.current) return null
-    const el = imgRef.current
-    const scaleX = el.clientWidth / PDF_W
-    const scaleY = el.clientHeight / PDF_H
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    // getBoundingClientRect gives CSS pixel dimensions (zoom-adjusted by browser)
+    const bounds = canvas.getBoundingClientRect()
+    const scaleX = bounds.width / PDF_W
+    const scaleY = bounds.height / PDF_H
     return {
       left: pdfX * scaleX,
       top: (PDF_H - pdfY - pdfHeight) * scaleY,
       width: pdfWidth * scaleX,
       height: pdfHeight * scaleY,
+    }
+  }
+
+  function getPosRelativeToCanvas(clientX: number, clientY: number): { x: number; y: number } | null {
+    const bounds = getCanvasBounds()
+    if (!bounds) return null
+    return {
+      x: Math.max(0, Math.min(clientX - bounds.left, bounds.width)),
+      y: Math.max(0, Math.min(clientY - bounds.top, bounds.height)),
     }
   }
 
@@ -362,8 +444,6 @@ export default function MapperPage() {
       if (formConfigRef.current.predefinedFields) {
         const pFields = SELLER_DISCLOSURE_FIELDS.filter(f => f.page === pg)
         const idx = pFields.findIndex(f => f.key === key)
-        // find next unmapped — but we need current coords which are being updated async
-        // just advance to next field
         const nextField = pFields[idx + 1]
         if (nextField) setSelectedField(nextField.key)
       }
@@ -389,22 +469,13 @@ export default function MapperPage() {
     if (type !== 'info') setTimeout(() => setMessage(''), 3000)
   }
 
-  // ─── Document-level mouse handlers (drawing always works, even outside div) ─
-  function getPosRelativeToImg(clientX: number, clientY: number): { x: number; y: number } | null {
-    const bounds = getImgBounds()
-    if (!bounds) return null
-    return {
-      x: Math.max(0, Math.min(clientX - bounds.left, bounds.width)),
-      y: Math.max(0, Math.min(clientY - bounds.top, bounds.height)),
-    }
-  }
-
+  // ─── Drawing — document-level events so cursor can leave overlay ──────────
   function onOverlayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (!imgLoaded) return
+    if (!pageReady) return
     if (formConfig.predefinedFields && !selectedField) return
     e.preventDefault()
 
-    const pos = getPosRelativeToImg(e.clientX, e.clientY)
+    const pos = getPosRelativeToCanvas(e.clientX, e.clientY)
     if (!pos) return
 
     isDrawingRef.current = true
@@ -414,11 +485,10 @@ export default function MapperPage() {
     setDrawCurrent(pos)
   }
 
-  // Attach document-level move/up when drawing — so cursor can leave overlay
   useEffect(() => {
     function onDocMouseMove(e: MouseEvent) {
       if (!isDrawingRef.current) return
-      const pos = getPosRelativeToImg(e.clientX, e.clientY)
+      const pos = getPosRelativeToCanvas(e.clientX, e.clientY)
       if (pos) setDrawCurrent(pos)
     }
 
@@ -427,7 +497,7 @@ export default function MapperPage() {
       isDrawingRef.current = false
 
       const start = drawStartRef.current
-      const pos = getPosRelativeToImg(e.clientX, e.clientY)
+      const pos = getPosRelativeToCanvas(e.clientX, e.clientY)
 
       setIsDrawing(false)
       setDrawStart(null)
@@ -443,7 +513,7 @@ export default function MapperPage() {
 
       if (right - left < 4 || bottom - top < 4) return
 
-      const bounds = getImgBounds()
+      const bounds = getCanvasBounds()
       if (!bounds) return
 
       const pdfRect = {
@@ -472,7 +542,7 @@ export default function MapperPage() {
       document.removeEventListener('mouseup', onDocMouseUp)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgLoaded])
+  }, [pageReady])
 
   async function handleModalSave(name: string, type: string, isSignature: boolean, isInitial: boolean, required: boolean) {
     const rect = pendingRectRef.current || pendingRect
@@ -552,7 +622,7 @@ export default function MapperPage() {
         .filter(([, coord]) => coord.page_num === currentPage)
         .map(([key, coord]) => ({ key, type: coord.field_type || 'text' }))
 
-  const canDraw = imgLoaded && (!formConfig.predefinedFields || !!selectedField)
+  const canDraw = pageReady && (!formConfig.predefinedFields || !!selectedField)
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
@@ -817,7 +887,7 @@ export default function MapperPage() {
         )}
       </div>
 
-      {/* ── PDF Viewer ── */}
+      {/* ── PDF Canvas Viewer ── */}
       <div className="flex-1 flex flex-col bg-gray-950 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-2">
@@ -836,6 +906,7 @@ export default function MapperPage() {
             >
               <ChevronRight className="w-4 h-4" />
             </button>
+            {rendering && <span className="text-xs text-blue-400 ml-2">Rendering…</span>}
           </div>
 
           <div className="flex items-center gap-2">
@@ -861,31 +932,34 @@ export default function MapperPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto flex items-start justify-center p-6">
+        {/* Scrollable canvas area */}
+        <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-start justify-center p-6">
           <div
             className="relative inline-block"
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imgRef}
-              src={formConfig.imagePath(currentPage)}
-              alt={`Page ${currentPage}`}
-              onLoad={() => setImgLoaded(true)}
-              className="block shadow-2xl select-none"
-              style={{ maxWidth: '700px', width: '100%' }}
-              draggable={false}
+            {/* Real PDF rendered onto canvas */}
+            <canvas
+              ref={canvasRef}
+              className="block shadow-2xl select-none bg-white"
+              style={{ maxWidth: '700px' }}
             />
 
-            {imgLoaded && (
+            {/* Loading overlay while page renders */}
+            {!pageReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-800/70 rounded">
+                <span className="text-sm text-gray-300">{pdfDoc ? 'Rendering page…' : 'Loading PDF…'}</span>
+              </div>
+            )}
+
+            {/* Drawing + field overlay — sits on top of canvas */}
+            {pageReady && (
               <div
                 ref={overlayRef}
-                className={`absolute inset-0 ${
-                  canDraw ? 'cursor-crosshair' : 'cursor-default'
-                }`}
+                className={`absolute inset-0 ${canDraw ? 'cursor-crosshair' : 'cursor-default'}`}
                 onMouseDown={onOverlayMouseDown}
               >
-                {/* Draw preview rectangle */}
+                {/* Live draw preview rectangle */}
                 {drawPreview && (
                   <div
                     className="absolute border-2 border-dashed border-white bg-white/10 pointer-events-none"
@@ -896,7 +970,7 @@ export default function MapperPage() {
                   />
                 )}
 
-                {/* Field overlays */}
+                {/* Saved field overlays */}
                 {overlayFields.map(({ key, type }) => {
                   const coord = coordinates[key]
                   if (!coord) return null
