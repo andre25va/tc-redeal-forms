@@ -1,14 +1,17 @@
 'use client';
 import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Download, BookOpen, CheckSquare, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 import UploadPanel from '@/components/compliance/UploadPanel';
 import PartyCard from '@/components/compliance/PartyCard';
-import PDFViewer from '@/components/compliance/PDFViewer';
 import ContractTabs from '@/components/compliance/ContractTabs';
 import LibraryView from '@/components/compliance/LibraryView';
 import { TransactionPackage, Contract, Party, ViewPage, FiredTrigger } from '@/lib/compliance/types';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
+
+// Load PDFViewer only on the client — pdfjs-dist requires browser APIs
+const PDFViewer = dynamic(() => import('@/components/compliance/PDFViewer'), { ssr: false });
 
 const MOCK_PACKAGE: TransactionPackage = {
   fileName: 'Smith-Torres_Transaction_Package.pdf',
@@ -110,6 +113,7 @@ const MOCK_PACKAGE: TransactionPackage = {
         { id: 'lp_agent1',  role: 'agent',  label: 'Agent 1',  name: 'Rosa Martinez',    fields: [{ fieldId: 'lp_ag1_sig_p2', label: 'Agent Sig — Page 2',  page: 2, type: 'signature', status: 'signed', x: 3,  y: 96, w: 44, h: 5 }] },
       ],
       missingFields: [],
+      firedTriggers: [],
     },
     {
       id: 'counter-offer', formName: 'Counter Offer Addendum', shortName: 'Counter Offer',
@@ -122,6 +126,7 @@ const MOCK_PACKAGE: TransactionPackage = {
       missingFields: [
         { fieldId: 'co_b1_sig_p1', label: 'Signature', partyLabel: 'Buyer 1', party: 'Michael Torres', page: 1, type: 'signature', x: 3, y: 85, w: 44, h: 5 },
       ],
+      firedTriggers: [],
     },
   ],
 };
