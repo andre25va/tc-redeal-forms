@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Field Mapper</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1a1a2e; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .header h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+  .header-sub { font-size: 11px; color: #a0aec0; margin-left: auto; }
+  .badge { background: #e94560; color: white; border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+
+  /* Toolbar */
+  .toolbar { background: white; border-bottom: 1px solid #e2e8f0; padding: 8px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  .toolbar select { height: 30px; padding: 0 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; background: white; cursor: pointer; }
+  .toolbar select:focus { outline: none; border-color: #e94560; }
+  .btn { height: 30px; padding: 0 12px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.15s; white-space: nowrap; }
+  .btn-primary { background: #e94560; color: white; }
+  .btn-primary:hover { background: #c73652; }
+  .btn-secondary { background: #edf2f7; color: #4a5568; border: 1px solid #cbd5e0; }
+  .btn-secondary:hover { background: #e2e8f0; }
+  .btn-danger { background: #fff5f5; color: #e53e3e; border: 1px solid #fed7d7; }
+  .btn-danger:hover { background: #fed7d7; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .sep { width: 1px; height: 22px; background: #e2e8f0; margin: 0 2px; }
+  .page-info { font-size: 12px; color: #718096; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0 10px; height: 30px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .change-badge { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; border-radius: 10px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
+  .status-msg { font-size: 12px; color: #48bb78; font-weight: 600; }
+
+  /* Layers */
+  .layer-toggles { display: flex; gap: 6px; align-items: center; }
+  .layer-btn { height: 26px; padding: 0 8px; border-radius: 4px; border: 1px solid; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .layer-btn.active { opacity: 1; }
+  .layer-btn.inactive { opacity: 0.45; }
+  .layer-text { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
+  .layer-checkbox { border-color: #8b5cf6; color: #7c3aed; background: #f5f3ff; }
+  .layer-sig { border-color: #ef4444; color: #dc2626; background: #fef2f2; }
+  .layer-initial { border-color: #f59e0b; color: #d97706; background: #fffbeb; }
+
+  /* Main layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 260px; background: white; border-right: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
+  .sidebar-header { padding: 10px 12px; font-size: 12px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; background: #f7fafc; }
+  .field-list { flex: 1; overflow-y: auto; padding: 6px; }
+  .field-item { padding: 6px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; margin-bottom: 3px; transition: all 0.1s; }
+  .field-item:hover { background: #f7fafc; border-color: #e2e8f0; }
+  .field-item.selected { background: #fff5f7; border-color: #e94560; }
+  .field-item .fkey { font-size: 11px; font-weight: 700; color: #1a1a2e; }
+  .field-item .fmeta { font-size: 10px; color: #718096; margin-top: 1px; }
+  .field-item .ftag { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px; margin-right: 3px; }
+  .tag-text { background: #dbeafe; color: #1d4ed8; }
+  .tag-checkbox { background: #ede9fe; color: #6d28d9; }
+  .tag-sig { background: #fee2e2; color: #b91c1c; }
+  .tag-initial { background: #fef3c7; color: #92400e; }
+  .tag-req { background: #dcfce7; color: #166534; }
+
+  /* Properties panel */
+  .props-panel { border-top: 1px solid #e2e8f0; padding: 10px 12px; }
+  .props-panel h3 { font-size: 11px; font-weight: 700; color: #4a5568; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .props-panel label { display: block; font-size: 11px; font-weight: 600; color: #4a5568; margin-bottom: 2px; }
+  .props-panel input, .props-panel select { width: 100%; height: 28px; padding: 0 8px; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 12px; margin-bottom: 6px; }
+  .props-panel input:focus, .props-panel select:focus { outline: none; border-color: #e94560; }
+  .checkrow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; color: #4a5568; }
+  .checkrow input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; }
+  .props-actions { display: flex; gap: 6px; margin-top: 4px; }
+  .props-actions .btn { flex: 1; justify-content: center; }
+
+  /* Canvas area */
+  .canvas-wrap { flex: 1; overflow: auto; background: #6b7280; display: flex; align-items: flex-start; justify-content: center; padding: 20px; }
+  .page-container { position: relative; display: inline-block; cursor: crosshair; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+  .page-container img { display: block; user-select: none; pointer-events: none; }
+  .page-container svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: all; }
+
+  /* Field rects */
+  .field-rect { fill: transparent; stroke-width: 1.5; rx: 2; cursor: move; }
+  .field-rect:hover { opacity: 0.85; }
+  .field-rect.selected { stroke-width: 2.5; }
+  .field-rect.type-text { stroke: #3b82f6; fill: rgba(59,130,246,0.1); }
+  .field-rect.type-checkbox { stroke: #8b5cf6; fill: rgba(139,92,246,0.1); }
+  .field-rect.type-signature { stroke: #ef4444; fill: rgba(239,68,68,0.12); }
+  .field-rect.type-initial { stroke: #f59e0b; fill: rgba(245,158,11,0.12); }
+  .field-rect.selected.type-text { fill: rgba(59,130,246,0.2); }
+  .field-rect.selected.type-checkbox { fill: rgba(139,92,246,0.2); }
+  .field-rect.selected.type-signature { fill: rgba(239,68,68,0.22); }
+  .field-rect.selected.type-initial { fill: rgba(245,158,11,0.22); }
+  .field-label { font-size: 7px; font-family: monospace; font-weight: 600; pointer-events: none; }
+  .resize-handle { fill: white; stroke: #1a1a2e; stroke-width: 1; cursor: nwse-resize; }
+
+  /* Draw ghost */
+  .draw-ghost { fill: rgba(233,69,96,0.15); stroke: #e94560; stroke-width: 1.5; stroke-dasharray: 4 2; }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .modal-bg.hidden { display: none; }
+  .modal { background: white; border-radius: 12px; padding: 24px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .modal h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal label { display: block; font-size: 12px; font-weight: 600; color: #4a5568; margin-bottom: 3px; }
+  .modal input, .modal select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+  .modal input:focus, .modal select:focus { outline: none; border-color: #e94560; }
+  .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  .modal .checkrow { margin-bottom: 8px; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 20px; right: 20px; background: #1a1a2e; color: white; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 2000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.error { background: #c53030; }
+  .toast.success { background: #276749; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f1f1f1; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="badge">MAPPER</div>
+  <h1>PDF Field Mapper</h1>
+  <span id="headerInfo" class="header-sub">Select a form to begin</span>
+</div>
+
+<div class="toolbar">
+  <select id="formSelect">
+    <option value="">— Select Form —</option>
+    <option value="seller-disclosure">Seller Disclosure (8 pages)</option>
+    <option value="residential-sale-contract">Purchase Contract (16 pages)</option>
+  </select>
+  <select id="pageSelect" disabled></select>
+  <div class="sep"></div>
+  <button class="btn btn-secondary" id="btnIds" onclick="toggleIds()">IDs On</button>
+  <div class="sep"></div>
+  <div class="layer-toggles">
+    <button class="layer-btn layer-text active" id="layText" onclick="toggleLayer('text')">Text</button>
+    <button class="layer-btn layer-checkbox active" id="layChk" onclick="toggleLayer('checkbox')">Check</button>
+    <button class="layer-btn layer-sig active" id="laySig" onclick="toggleLayer('signature')">Sig</button>
+    <button class="layer-btn layer-initial active" id="layInit" onclick="toggleLayer('initial')">Init</button>
+  </div>
+  <div class="sep"></div>
+  <button class="btn btn-secondary" id="btnUndo" onclick="undo()" disabled>↩ Undo</button>
+  <button class="btn btn-danger" id="btnDelete" onclick="deleteSelected()" disabled>🗑 Delete</button>
+  <div class="sep"></div>
+  <button class="btn btn-primary" id="btnSave" onclick="saveToSupabase()" disabled>💾 Save</button>
+  <span id="changeBadge" class="change-badge" style="display:none"></span>
+  <span id="statusMsg" class="status-msg" style="display:none"></span>
+  <div class="page-info" id="pageInfo">No form selected</div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      Fields <span id="fieldCount" style="font-weight:400;color:#718096"></span>
+    </div>
+    <div class="field-list" id="fieldList"></div>
+    <div class="props-panel" id="propsPanel" style="display:none">
+      <h3>Edit Field</h3>
+      <label>Field Key</label>
+      <input type="text" id="propKey" placeholder="field_key">
+      <label>Type</label>
+      <select id="propType">
+        <option value="text">Text</option>
+        <option value="checkbox">Checkbox</option>
+        <option value="signature">Signature</option>
+        <option value="initial">Initial</option>
+      </select>
+      <div class="checkrow"><input type="checkbox" id="propSig"><label>Is Signature</label></div>
+      <div class="checkrow"><input type="checkbox" id="propInit"><label>Is Initial</label></div>
+      <div class="checkrow"><input type="checkbox" id="propReq"><label>Required</label></div>
+      <div class="props-actions">
+        <button class="btn btn-primary" onclick="applyProps()">Apply</button>
+        <button class="btn btn-secondary" onclick="cancelProps()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-wrap" id="canvasWrap">
+    <div style="color:white;text-align:center;margin-top:60px;opacity:0.7">
+      <div style="font-size:48px;margin-bottom:12px">📄</div>
+      <div style="font-size:16px;font-weight:600">Select a form to start mapping</div>
+      <div style="font-size:13px;margin-top:6px">Draw boxes over fields by clicking and dragging</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Field Modal -->
+<div class="modal-bg hidden" id="addModal">
+  <div class="modal">
+    <h2>Add Field</h2>
+    <label>Field Key</label>
+    <input type="text" id="modalKey" placeholder="e.g. seller_name" autocomplete="off">
+    <label>Type</label>
+    <select id="modalType">
+      <option value="text">Text</option>
+      <option value="checkbox">Checkbox</option>
+      <option value="signature">Signature</option>
+      <option value="initial">Initial</option>
+    </select>
+    <div class="checkrow"><input type="checkbox" id="modalSig"><label>Is Signature</label></div>
+    <div class="checkrow"><input type="checkbox" id="modalInit"><label>Is Initial</label></div>
+    <div class="checkrow"><input type="checkbox" id="modalReq"><label>Required</label></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cancelAdd()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAdd()">Add Field</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────
+const SUPABASE_URL = 'https://alxrmusieuzgssynktxg.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFseHJtdXNpZXV6Z3NzeW5rdHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2NjcyMzIsImV4cCI6MjA4OTI0MzIzMn0.p3AnSdYQM30KzPLjPQxa7fM--lnNZOe0U1L_81LgvNM';
+
+// Page image paths (relative to app root)
+const FORM_PAGES = {
+  'seller-disclosure': { count: 8, prefix: '/mapper-pages/sd-page-', ext: '.jpg', slug: 'seller-disclosure', name: 'Seller Disclosure' },
+  'residential-sale-contract': { count: 16, prefix: '/mapper-pages/pc-page-', ext: '.jpg', slug: 'residential-sale-contract', name: 'Purchase Contract' }
+};
+
+// ── State ────────────────────────────────────────────────
+let sbClient;
+let currentForm = null;
+let currentPage = 1;
+let allFields = [];       // all fields for current form (all pages)
+let pageFields = [];      // fields for current page (derived)
+let selectedId = null;
+let showIds = true;
+let visibleTypes = new Set(['text', 'checkbox', 'signature', 'initial']);
+let pendingChanges = new Map(); // id -> {action:'upsert'|'delete', field}
+let undoStack = [];
+let imgW = 0, imgH = 0;
+let imgNatW = 0, imgNatH = 0;
+
+// Draw state
+let isDrawing = false;
+let drawStart = null;
+let ghostRect = null;
+let pendingRect = null; // {x,y,w,h} in image coords to confirm in modal
+
+// Drag state
+let isDragging = false;
+let dragField = null;
+let dragOffX = 0, dragOffY = 0;
+
+// Resize state
+let isResizing = false;
+let resizeField = null;
+let resizeHandle = null;
+let resizeStart = null;
+
+// ── Init ─────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  document.getElementById('formSelect').addEventListener('change', onFormChange);
+  document.getElementById('pageSelect').addEventListener('change', onPageChange);
+  document.addEventListener('keydown', onKeyDown);
+});
+
+function onFormChange() {
+  const val = document.getElementById('formSelect').value;
+  if (!val) return;
+  currentForm = val;
+  currentPage = 1;
+  allFields = [];
+  pendingChanges.clear();
+  undoStack = [];
+  selectedId = null;
+  updateChangeBadge();
+
+  const cfg = FORM_PAGES[val];
+  const sel = document.getElementById('pageSelect');
+  sel.innerHTML = '';
+  for (let i = 1; i <= cfg.count; i++) {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `Page ${i} of ${cfg.count}`;
+    sel.appendChild(opt);
+  }
+  sel.disabled = false;
+
+  document.getElementById('headerInfo').textContent = cfg.name;
+  loadAllFieldsAndRender();
+}
+
+function onPageChange() {
+  currentPage = parseInt(document.getElementById('pageSelect').value);
+  selectedId = null;
+  renderPage();
+}
+
+// ── Load from Supabase ────────────────────────────────────
+async function loadAllFieldsAndRender() {
+  showToast('Loading fields…');
+  try {
+    const { data, error } = await sbClient
+      .from('field_coordinates')
+      .select('*')
+      .eq('form_slug', FORM_PAGES[currentForm].slug)
+      .order('page_num')
+      .order('y');
+    if (error) throw error;
+    allFields = (data || []).map(r => ({
+      id: r.field_key + '_p' + r.page_num + '_' + Math.random().toString(36).slice(2,6),
+      key: r.field_key,
+      page: r.page_num,
+      x: r.x, y: r.y, w: r.width, h: r.height,
+      type: r.field_type || 'text',
+      isSig: r.is_signature || false,
+      isInit: r.is_initial || false,
+      required: r.required || false,
+      _orig: { ...r }
+    }));
+    showToast(`Loaded ${allFields.length} fields`, 'success');
+    renderPage();
+    updateFieldList();
+    updateSaveBtn();
+  } catch(e) {
+    showToast('Error loading: ' + e.message, 'error');
+  }
+}
+
+// ── Render page ───────────────────────────────────────────
+function renderPage() {
+  const cfg = FORM_PAGES[currentForm];
+  if (!cfg) return;
+  const wrap = document.getElementById('canvasWrap');
+  wrap.innerHTML = '';
+
+  const imgSrc = cfg.prefix + currentPage + cfg.ext;
+  const container = document.createElement('div');
+  container.className = 'page-container';
+  container.id = 'pageContainer';
+
+  const img = document.createElement('img');
+  img.src = imgSrc;
+  img.draggable = false;
+  img.onload = () => {
+    imgNatW = img.naturalWidth;
+    imgNatH = img.naturalHeight;
+    imgW = img.offsetWidth;
+    imgH = img.offsetHeight;
+    buildSvg(container, img);
+  };
+  img.onerror = () => {
+    wrap.innerHTML = `<div style="color:white;text-align:center;margin-top:60px"><div style="font-size:32px">⚠️</div><div style="margin-top:8px">Could not load page ${currentPage}</div><div style="font-size:12px;opacity:0.7;margin-top:4px">${imgSrc}</div></div>`;
+  };
+  container.appendChild(img);
+  wrap.appendChild(container);
+
+  pageFields = allFields.filter(f => f.page === currentPage);
+  document.getElementById('pageInfo').textContent = `Page ${currentPage} | ${pageFields.length} fields`;
+}
+
+function buildSvg(container, img) {
+  const existing = container.querySelector('svg');
+  if (existing) existing.remove();
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', img.offsetWidth);
+  svg.setAttribute('height', img.offsetHeight);
+  imgW = img.offsetWidth;
+  imgH = img.offsetHeight;
+
+  // Mouse events for drawing
+  svg.addEventListener('mousedown', onSvgMouseDown);
+  svg.addEventListener('mousemove', onSvgMouseMove);
+  svg.addEventListener('mouseup', onSvgMouseUp);
+  svg.addEventListener('mouseleave', onSvgMouseLeave);
+
+  // Render fields
+  pageFields = allFields.filter(f => f.page === currentPage);
+  pageFields.forEach(f => renderFieldRect(svg, f));
+
+  container.appendChild(svg);
+  updateFieldList();
+}
+
+function renderFieldRect(svg, f) {
+  if (!visibleTypes.has(f.type)) return;
+
+  const scaleX = imgW / imgNatW;
+  const scaleY = imgH / imgNatH;
+  const rx = f.x * scaleX, ry = f.y * scaleY;
+  const rw = f.w * scaleX, rh = f.h * scaleY;
+
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('data-id', f.id);
+
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', rx); rect.setAttribute('y', ry);
+  rect.setAttribute('width', rw); rect.setAttribute('height', rh);
+  rect.setAttribute('rx', 2);
+  rect.classList.add('field-rect', `type-${f.type}`);
+  if (f.id === selectedId) rect.classList.add('selected');
+  rect.addEventListener('mousedown', (e) => onFieldMouseDown(e, f, g));
+  g.appendChild(rect);
+
+  if (showIds) {
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', rx + 2); label.setAttribute('y', ry + 8);
+    label.classList.add('field-label');
+    label.setAttribute('fill', typeColor(f.type));
+    label.textContent = f.key;
+    g.appendChild(label);
+  }
+
+  if (f.id === selectedId) {
+    addResizeHandles(g, rx, ry, rw, rh, f);
+  }
+
+  svg.appendChild(g);
+}
+
+function addResizeHandles(g, rx, ry, rw, rh, f) {
+  const handles = [
+    { cx: rx, cy: ry, corner: 'nw' },
+    { cx: rx+rw, cy: ry, corner: 'ne' },
+    { cx: rx, cy: ry+rh, corner: 'sw' },
+    { cx: rx+rw, cy: ry+rh, corner: 'se' }
+  ];
+  handles.forEach(h => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    c.setAttribute('x', h.cx - 4); c.setAttribute('y', h.cy - 4);
+    c.setAttribute('width', 8); c.setAttribute('height', 8);
+    c.setAttribute('rx', 2);
+    c.classList.add('resize-handle');
+    c.style.cursor = h.corner === 'nw' || h.corner === 'se' ? 'nwse-resize' : 'nesw-resize';
+    c.addEventListener('mousedown', (e) => onResizeMouseDown(e, f, h.corner));
+    g.appendChild(c);
+  });
+}
+
+function typeColor(t) {
+  return { text:'#2563eb', checkbox:'#6d28d9', signature:'#b91c1c', initial:'#92400e' }[t] || '#333';
+}
+
+function rebuildSvg() {
+  const container = document.getElementById('pageContainer');
+  if (!container) return;
+  const img = container.querySelector('img');
+  if (img && img.complete) buildSvg(container, img);
+}
+
+// ── Mouse interactions ────────────────────────────────────
+function svgCoords(e) {
+  const svg = e.currentTarget.closest('svg') || e.currentTarget;
+  const rect = svg.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function toImgCoords(sx, sy) {
+  return { x: sx / imgW * imgNatW, y: sy / imgH * imgNatH };
+}
+
+function onSvgMouseDown(e) {
+  if (e.target !== e.currentTarget && e.target.tagName !== 'svg') return;
+  if (e.button !== 0) return;
+  selectedId = null;
+  isDrawing = true;
+  const c = svgCoords(e);
+  drawStart = c;
+  e.preventDefault();
+  updatePropsPanel();
+  rebuildSvg();
+}
+
+function onSvgMouseMove(e) {
+  if (!isDrawing && !isDragging && !isResizing) return;
+  e.preventDefault();
+
+  const svg = document.querySelector('#pageContainer svg');
+  if (!svg) return;
+
+  if (isDrawing) {
+    const c = svgCoords(e);
+    const x = Math.min(drawStart.x, c.x);
+    const y = Math.min(drawStart.y, c.y);
+    const w = Math.abs(c.x - drawStart.x);
+    const h = Math.abs(c.y - drawStart.y);
+    if (!ghostRect) {
+      ghostRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      ghostRect.classList.add('draw-ghost');
+      svg.appendChild(ghostRect);
+    }
+    ghostRect.setAttribute('x', x); ghostRect.setAttribute('y', y);
+    ghostRect.setAttribute('width', w); ghostRect.setAttribute('height', h);
+  }
+
+  if (isDragging && dragField) {
+    const c = svgCoords(e);
+    const sx = c.x - dragOffX;
+    const sy = c.y - dragOffY;
+    const ic = toImgCoords(sx, sy);
+    dragField.x = Math.max(0, Math.min(ic.x, imgNatW - dragField.w));
+    dragField.y = Math.max(0, Math.min(ic.y, imgNatH - dragField.h));
+    rebuildSvg();
+  }
+
+  if (isResizing && resizeField) {
+    const c = svgCoords(e);
+    const ic = toImgCoords(c.x, c.y);
+    let { x, y, w, h } = resizeStart;
+    if (resizeHandle === 'se') { w = Math.max(5, ic.x - x); h = Math.max(5, ic.y - y); }
+    else if (resizeHandle === 'sw') { w = Math.max(5, (x+w) - ic.x); x = ic.x; h = Math.max(5, ic.y - y); }
+    else if (resizeHandle === 'ne') { w = Math.max(5, ic.x - x); h = Math.max(5, (y+h) - ic.y); y = ic.y; }
+    else if (resizeHandle === 'nw') { w = Math.max(5, (x+w) - ic.x); x = ic.x; h = Math.max(5, (y+h) - ic.y); y = ic.y; }
+    resizeField.x = x; resizeField.y = y; resizeField.w = w; resizeField.h = h;
+    rebuildSvg();
+  }
+}
+
+function onSvgMouseUp(e) {
+  if (isDrawing) {
+    const c = svgCoords(e);
+    const w = Math.abs(c.x - drawStart.x);
+    const h = Math.abs(c.y - drawStart.y);
+    if (w > 8 && h > 5) {
+      const sx = Math.min(drawStart.x, c.x);
+      const sy = Math.min(drawStart.y, c.y);
+      const ic = toImgCoords(sx, sy);
+      const icW = w / imgW * imgNatW;
+      const icH = h / imgH * imgNatH;
+      pendingRect = { x: ic.x, y: ic.y, w: icW, h: icH };
+      openAddModal();
+    }
+    isDrawing = false;
+    if (ghostRect) { ghostRect.remove(); ghostRect = null; }
+  }
+  if (isDragging && dragField) {
+    pushUndo();
+    markChanged(dragField);
+    isDragging = false;
+    dragField = null;
+  }
+  if (isResizing && resizeField) {
+    pushUndo();
+    markChanged(resizeField);
+    isResizing = false;
+    resizeField = null;
+  }
+}
+
+function onSvgMouseLeave(e) {
+  if (isDrawing) { isDrawing = false; if (ghostRect) { ghostRect.remove(); ghostRect = null; } }
+}
+
+function onFieldMouseDown(e, f, g) {
+  e.stopPropagation();
+  if (e.target.classList.contains('resize-handle')) return;
+  selectedId = f.id;
+  isDragging = true;
+  dragField = f;
+  const svgEl = g.closest('svg');
+  const rect2 = svgEl.getBoundingClientRect();
+  const cx = e.clientX - rect2.left;
+  const cy = e.clientY - rect2.top;
+  const scaleX = imgW / imgNatW;
+  const scaleY = imgH / imgNatH;
+  dragOffX = cx - f.x * scaleX;
+  dragOffY = cy - f.y * scaleY;
+  e.preventDefault();
+  updatePropsPanel();
+  rebuildSvg();
+}
+
+function onResizeMouseDown(e, f, corner) {
+  e.stopPropagation();
+  e.preventDefault();
+  selectedId = f.id;
+  isResizing = true;
+  resizeField = f;
+  resizeHandle = corner;
+  resizeStart = { x: f.x, y: f.y, w: f.w, h: f.h };
+}
+
+// ── Keyboard ──────────────────────────────────────────────
+function onKeyDown(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undo(); return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
+  if (!selectedId) return;
+  const f = allFields.find(x => x.id === selectedId);
+  if (!f) return;
+  const step = e.shiftKey ? 5 : 1;
+  if (e.key === 'ArrowLeft') f.x -= step;
+  else if (e.key === 'ArrowRight') f.x += step;
+  else if (e.key === 'ArrowUp') f.y -= step;
+  else if (e.key === 'ArrowDown') f.y += step;
+  else return;
+  e.preventDefault();
+  markChanged(f);
+  rebuildSvg();
+}
+
+// ── Modal ─────────────────────────────────────────────────
+function openAddModal() {
+  document.getElementById('modalKey').value = '';
+  document.getElementById('modalType').value = 'text';
+  document.getElementById('modalSig').checked = false;
+  document.getElementById('modalInit').checked = false;
+  document.getElementById('modalReq').checked = false;
+  document.getElementById('addModal').classList.remove('hidden');
+  document.getElementById('modalKey').focus();
+}
+
+function cancelAdd() {
+  document.getElementById('addModal').classList.add('hidden');
+  pendingRect = null;
+}
+
+function confirmAdd() {
+  const key = document.getElementById('modalKey').value.trim();
+  if (!key) { document.getElementById('modalKey').focus(); return; }
+  const f = {
+    id: key + '_p' + currentPage + '_' + Date.now(),
+    key, page: currentPage,
+    x: pendingRect.x, y: pendingRect.y,
+    w: pendingRect.w, h: pendingRect.h,
+    type: document.getElementById('modalType').value,
+    isSig: document.getElementById('modalSig').checked,
+    isInit: document.getElementById('modalInit').checked,
+    required: document.getElementById('modalReq').checked
+  };
+  pushUndo();
+  allFields.push(f);
+  markChanged(f);
+  selectedId = f.id;
+  document.getElementById('addModal').classList.add('hidden');
+  pendingRect = null;
+  rebuildSvg();
+  updateFieldList();
+  updatePropsPanel();
+}
+
+// ── Properties Panel ──────────────────────────────────────
+function updatePropsPanel() {
+  const panel = document.getElementById('propsPanel');
+  const f = allFields.find(x => x.id === selectedId);
+  if (!f) { panel.style.display = 'none'; document.getElementById('btnDelete').disabled = true; return; }
+  panel.style.display = 'block';
+  document.getElementById('propKey').value = f.key;
+  document.getElementById('propType').value = f.type;
+  document.getElementById('propSig').checked = f.isSig;
+  document.getElementById('propInit').checked = f.isInit;
+  document.getElementById('propReq').checked = f.required;
+  document.getElementById('btnDelete').disabled = false;
+}
+
+function applyProps() {
+  const f = allFields.find(x => x.id === selectedId);
+  if (!f) return;
+  pushUndo();
+  f.key = document.getElementById('propKey').value.trim() || f.key;
+  f.type = document.getElementById('propType').value;
+  f.isSig = document.getElementById('propSig').checked;
+  f.isInit = document.getElementById('propInit').checked;
+  f.required = document.getElementById('propReq').checked;
+  markChanged(f);
+  rebuildSvg();
+  updateFieldList();
+}
+
+function cancelProps() {
+  selectedId = null;
+  document.getElementById('propsPanel').style.display = 'none';
+  document.getElementById('btnDelete').disabled = true;
+  rebuildSvg();
+}
+
+// ── Delete ────────────────────────────────────────────────
+function deleteSelected() {
+  if (!selectedId) return;
+  const idx = allFields.findIndex(x => x.id === selectedId);
+  if (idx === -1) return;
+  const f = allFields[idx];
+  pushUndo();
+  allFields.splice(idx, 1);
+  pendingChanges.set(f.key + '_p' + f.page, { action: 'delete', field: f });
+  selectedId = null;
+  updateChangeBadge();
+  rebuildSvg();
+  updateFieldList();
+  updatePropsPanel();
+}
+
+// ── Layer toggles ─────────────────────────────────────────
+function toggleLayer(type) {
+  if (visibleTypes.has(type)) visibleTypes.delete(type);
+  else visibleTypes.add(type);
+  const map = { text: 'layText', checkbox: 'layChk', signature: 'laySig', initial: 'layInit' };
+  const btn = document.getElementById(map[type]);
+  btn.classList.toggle('active', visibleTypes.has(type));
+  btn.classList.toggle('inactive', !visibleTypes.has(type));
+  rebuildSvg();
+}
+
+function toggleIds() {
+  showIds = !showIds;
+  document.getElementById('btnIds').textContent = showIds ? 'IDs On' : 'IDs Off';
+  rebuildSvg();
+}
+
+// ── Undo ──────────────────────────────────────────────────
+function pushUndo() {
+  undoStack.push(JSON.stringify(allFields));
+  if (undoStack.length > 30) undoStack.shift();
+  document.getElementById('btnUndo').disabled = false;
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  allFields = JSON.parse(undoStack.pop());
+  selectedId = null;
+  if (!undoStack.length) document.getElementById('btnUndo').disabled = true;
+  rebuildSvg();
+  updateFieldList();
+  updatePropsPanel();
+}
+
+// ── Changes ───────────────────────────────────────────────
+function markChanged(f) {
+  pendingChanges.set(f.key + '_p' + f.page, { action: 'upsert', field: f });
+  updateChangeBadge();
+}
+
+function updateChangeBadge() {
+  const badge = document.getElementById('changeBadge');
+  const n = pendingChanges.size;
+  if (n === 0) { badge.style.display = 'none'; }
+  else { badge.style.display = ''; badge.textContent = n + ' unsaved'; }
+  document.getElementById('btnSave').disabled = n === 0;
+}
+
+// ── Save ──────────────────────────────────────────────────
+async function saveToSupabase() {
+  if (!pendingChanges.size) return;
+  const btn = document.getElementById('btnSave');
+  btn.disabled = true;
+  btn.textContent = '💾 Saving…';
+  const slug = FORM_PAGES[currentForm].slug;
+
+  try {
+    const upserts = [];
+    const deletes = [];
+    pendingChanges.forEach(({ action, field: f }) => {
+      if (action === 'upsert') {
+        upserts.push({
+          form_slug: slug, field_key: f.key, page_num: f.page,
+          x: Math.round(f.x), y: Math.round(f.y),
+          width: Math.round(f.w), height: Math.round(f.h),
+          field_type: f.type,
+          is_signature: f.isSig || false,
+          is_initial: f.isInit || false,
+          required: f.required || false
+        });
+      } else {
+        deletes.push({ field_key: f.key, page_num: f.page });
+      }
+    });
+
+    if (upserts.length) {
+      const { error } = await sbClient.from('field_coordinates').upsert(upserts, {
+        onConflict: 'form_slug,field_key,page_num'
+      });
+      if (error) throw error;
+    }
+
+    for (const d of deletes) {
+      const { error } = await sbClient.from('field_coordinates')
+        .delete()
+        .eq('form_slug', slug)
+        .eq('field_key', d.field_key)
+        .eq('page_num', d.page_num);
+      if (error) throw error;
+    }
+
+    pendingChanges.clear();
+    updateChangeBadge();
+    showToast(`Saved ${upserts.length} fields`, 'success');
+  } catch(e) {
+    showToast('Save failed: ' + e.message, 'error');
+    btn.disabled = false;
+  } finally {
+    btn.textContent = '💾 Save';
+    updateSaveBtn();
+  }
+}
+
+function updateSaveBtn() {
+  document.getElementById('btnSave').disabled = pendingChanges.size === 0;
+}
+
+// ── Field list ────────────────────────────────────────────
+function updateFieldList() {
+  const list = document.getElementById('fieldList');
+  const fields = allFields.filter(f => f.page === currentPage);
+  fields.sort((a,b) => a.y - b.y);
+  list.innerHTML = '';
+  fields.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'field-item' + (f.id === selectedId ? ' selected' : '');
+    div.onclick = () => { selectedId = f.id; rebuildSvg(); updateFieldList(); updatePropsPanel(); };
+    const tags = [
+      `<span class="ftag tag-${f.type}">${f.type[0].toUpperCase()}</span>`,
+      f.required ? `<span class="ftag tag-req">REQ</span>` : '',
+      f.isSig ? `<span class="ftag tag-sig">SIG</span>` : '',
+      f.isInit ? `<span class="ftag tag-initial">INIT</span>` : ''
+    ].join('');
+    div.innerHTML = `<div class="fkey">${tags}${f.key}</div><div class="fmeta">Page ${f.page} · (${Math.round(f.x)}, ${Math.round(f.y)}) · ${Math.round(f.w)}×${Math.round(f.h)}</div>`;
+    list.appendChild(div);
+  });
+  const total = allFields.filter(f => f.page === currentPage).length;
+  document.getElementById('fieldCount').textContent = `(${total} on page · ${allFields.length} total)`;
+  document.getElementById('pageInfo').textContent = `Page ${currentPage} | ${total} fields`;
+}
+
+// ── Toast ─────────────────────────────────────────────────
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.className = 'toast', 2800);
+}
+</script>
+</body>
+</html>
