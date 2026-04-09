@@ -494,6 +494,7 @@ function onSvgMouseDown(e) {
   if (e.button !== 0) return;
   selectedId = null;
   isDrawing = true;
+  hasDragged = false;
   const c = svgCoords(e);
   drawStart = c;
   e.preventDefault();
@@ -510,6 +511,8 @@ function onSvgMouseMove(e) {
 
   if (isDrawing) {
     const c = svgCoords(e);
+    const dist = Math.sqrt(Math.pow(c.x - drawStart.x, 2) + Math.pow(c.y - drawStart.y, 2));
+    if (dist > 10) hasDragged = true;
     const x = Math.min(drawStart.x, c.x);
     const y = Math.min(drawStart.y, c.y);
     const w = Math.abs(c.x - drawStart.x);
@@ -551,7 +554,7 @@ function onSvgMouseUp(e) {
     const c = svgCoords(e);
     const w = Math.abs(c.x - drawStart.x);
     const h = Math.abs(c.y - drawStart.y);
-    if (w > 8 && h > 5) {
+    if (hasDragged) {
       // Normal drag — use exact drawn size
       const sx = Math.min(drawStart.x, c.x);
       const sy = Math.min(drawStart.y, c.y);
