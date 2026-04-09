@@ -193,7 +193,7 @@ function PreviewPanel({
             if (!val) return null
             // PDF Y is from bottom; image Y is from top
             const left = f.x * scale
-            const top = (PDF_H - f.y - f.height) * scale
+            const top = f.y * scale
             const width = f.width * scale
             const height = Math.max(f.height * scale, 10)
 
