@@ -83,7 +83,7 @@ export default function ComparePage() {
         canvas.width = vp.width; canvas.height = vp.height
         if (renderLeftRef.current) { try { renderLeftRef.current.cancel() } catch {} }
         renderLeftRef.current = page.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
-        try { await renderLeftRef.current.promise } catch {}
+        try { await renderLeftRef.current.promise } catch (e) { console.error('[Compare] left render error:', e) }
       }
 
       if (canvasRightRef.current) {
@@ -92,7 +92,7 @@ export default function ComparePage() {
         if (renderRightRef.current) { try { renderRightRef.current.cancel() } catch {} }
         const page2 = await pdf.getPage(pageNum)
         renderRightRef.current = page2.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
-        try { await renderRightRef.current.promise } catch {}
+        try { await renderRightRef.current.promise } catch (e) { console.error('[Compare] right render error:', e) }
       }
     })()
     return () => { cancelled = true }
@@ -307,9 +307,7 @@ export default function ComparePage() {
                               overflow: 'visible',
                               paddingLeft: 2,
                               paddingRight: 2,
-                              backgroundColor: isSig || isInit
-                                ? 'rgba(139,92,246,0.07)'
-                                : 'rgba(59,130,246,0.07)',
+                              backgroundColor: 'white',
                               borderBottom: `1px solid ${color}35`,
                               zIndex: 1,
                             }}
