@@ -263,6 +263,7 @@ let pageFields = [];
 let selectedId = null;
 let showIds = true;
 let visibleTypes = new Set(['text', 'checkbox', 'signature', 'initial']);
+let drawType = 'checkbox'; // active draw type — set by clicking layer buttons
 let pendingChanges = new Map();
 let undoStack = [];
 let imgW = 0, imgH = 0;
@@ -287,6 +288,8 @@ let resizeStart = null;
 
 // ── Init ─────────────────────────────────────────────────
 window.addEventListener('load', () => {
+  // Set initial draw-active button (checkbox is default draw type)
+  document.getElementById('layChk')?.classList.add('draw-active');
   sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   document.getElementById('formSelect').addEventListener('change', onFormChange);
   document.getElementById('pageSelect').addEventListener('change', onPageChange);
@@ -549,12 +552,20 @@ function onSvgMouseUp(e) {
     const w = Math.abs(c.x - drawStart.x);
     const h = Math.abs(c.y - drawStart.y);
     if (w > 8 && h > 5) {
+      // Normal drag — use exact drawn size
       const sx = Math.min(drawStart.x, c.x);
       const sy = Math.min(drawStart.y, c.y);
       const ic = toImgCoords(sx, sy);
       const icW = w / imgW * imgNatW;
       const icH = h / imgH * imgNatH;
       pendingRect = { x: ic.x, y: ic.y, w: icW, h: icH };
+      openAddModal();
+    } else {
+      // Click — snap to pre-sized rect centered on click point
+      const presets = { checkbox: [21, 21], text: [200, 30], signature: [292, 58], initial: [83, 45] };
+      const [pw, ph] = presets[drawType] || [21, 21];
+      const ic = toImgCoords(drawStart.x - (pw * imgW / imgNatW / 2), drawStart.y - (ph * imgH / imgNatH / 2));
+      pendingRect = { x: ic.x, y: ic.y, w: pw, h: ph };
       openAddModal();
     }
     isDrawing = false;
@@ -627,6 +638,9 @@ function onKeyDown(e) {
 
 // ── Modal ─────────────────────────────────────────────────
 function openAddModal() {
+  // Pre-select the active draw type in the modal
+  const modalType = document.getElementById('modalType');
+  if (modalType) modalType.value = drawType;
   document.getElementById('modalKey').value = '';
   document.getElementById('modalType').value = 'text';
   document.getElementById('modalSig').checked = false;
@@ -837,9 +851,14 @@ function deleteSelected() {
 }
 
 function toggleLayer(type) {
-  if (visibleTypes.has(type)) visibleTypes.delete(type);
-  else visibleTypes.add(type);
+  // Single click: set as draw type (make visible if hidden)
+  drawType = type;
+  if (!visibleTypes.has(type)) visibleTypes.add(type);
   const map = { text: 'layText', checkbox: 'layChk', signature: 'laySig', initial: 'layInit' };
+  // Update draw-active ring on all buttons
+  Object.values(map).forEach(id => { const b = document.getElementById(id); if(b) b.classList.remove('draw-active'); });
+  const activeBtn = document.getElementById(map[type]);
+  if (activeBtn) activeBtn.classList.add('draw-active');
   const btn = document.getElementById(map[type]);
   btn.classList.toggle('active', visibleTypes.has(type));
   btn.classList.toggle('inactive', !visibleTypes.has(type));
