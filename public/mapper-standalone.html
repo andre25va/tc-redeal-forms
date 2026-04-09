@@ -154,7 +154,7 @@
     <option value="">— Select Form —</option>
     <option value="seller-disclosure">Seller Disclosure (8 pages)</option>
     <option value="residential-sale-contract">Purchase Contract (16 pages)</option>
-    <option value="right-to-sell-2025">Right to Sell 2025 (28 pages)</option>
+    <option value="exclusive-right-to-sell">Exclusive Right to Sell (8 pages)</option>
   </select>
   <select id="pageSelect" disabled></select>
   <div class="sep"></div>
@@ -258,7 +258,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Page image paths (relative to app root)
 const FORM_PAGES = {
   'seller-disclosure': { count: 8, prefix: '/mapper-pages/sd-page-', ext: '.jpg', slug: 'seller-disclosure', name: 'Seller Disclosure' },
-  'right-to-sell-2025': { count: 28, prefix: '/mapper-pages/rts-page-', ext: '.jpg', slug: 'right-to-sell-2025', name: 'Right to Sell 2025' },
+  'exclusive-right-to-sell': { count: 8, prefix: '/mapper-pages/erts-page-', ext: '.jpg' },
   'residential-sale-contract': { count: 16, prefix: '/mapper-pages/pc-page-', ext: '.jpg', slug: 'residential-sale-contract', name: 'Purchase Contract' }
 };
 
@@ -1007,7 +1007,7 @@ function updateFieldList() {
 
 function updatePageIdBar() {
   if (!currentForm) return;
-  const shortMap = { 'seller-disclosure': 'sd', 'residential-sale-contract': 'pc', 'right-to-sell-2025': 'rts' };
+  const shortMap = { 'seller-disclosure': 'sd', 'residential-sale-contract': 'pc', 'exclusive-right-to-sell': 'erts' };
   const short = shortMap[currentForm] || currentForm;
   const id = `${short}-p${currentPage}`;
   document.getElementById('pageIdValue').textContent = id;
