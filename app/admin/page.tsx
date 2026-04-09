@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { FormInvitation, FormSubmission } from '@/types'
-import { Plus, CheckCircle, Clock, AlertCircle, ExternalLink, Copy, MapPin, Eye, ShieldCheck } from 'lucide-react'
+import { Plus, CheckCircle, Clock, AlertCircle, ExternalLink, Copy, MapPin, Eye, ShieldCheck, FileText } from 'lucide-react'
 
 type InvitationWithSubmissions = FormInvitation & {
   form_submissions?: Pick<FormSubmission, 'id' | 'submitted_at' | 'pdf_url' | 'last_saved_at'>[]
@@ -67,10 +67,16 @@ export default function AdminDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <a
+              href="/admin/forms"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <FileText className="w-4 h-4 text-indigo-500" /> Forms Manager
+            </a>
+            <a
               href="/admin/mapper"
               className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              <MapPin className="w-4 h-4 text-indigo-500" /> Field Mapper
+              <MapPin className="w-4 h-4 text-indigo-500" /> Legacy Mapper
             </a>
             <a
               href="/forms/demo"
