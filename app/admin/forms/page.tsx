@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Upload, FileText, MapPin, Trash2, ArrowLeft, Plus } from 'lucide-react'
+import { Upload, FileText, MapPin, Trash2, ArrowLeft, Plus, ExternalLink, Loader2 } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -52,6 +52,7 @@ export default function AdminFormsPage() {
   const [formSlug, setFormSlug] = useState('')
   const [pageCount, setPageCount] = useState(0)
   const [dragOver, setDragOver] = useState(false)
+  const [fillingSlug, setFillingSlug] = useState<string | null>(null)
 
   useEffect(() => { loadForms() }, [])
 
@@ -123,6 +124,20 @@ export default function AdminFormsPage() {
     await loadForms()
   }
 
+  const fillForm = async (slug: string) => {
+    setFillingSlug(slug)
+    try {
+      const res = await fetch(`/api/invitations?form_slug=${slug}`, { method: 'POST' })
+      const data = await res.json()
+      if (!data.token) throw new Error(data.error || 'No token returned')
+      window.open(`/forms/${data.token}`, '_blank')
+    } catch (err) {
+      alert('Could not open form: ' + (err as Error).message)
+    } finally {
+      setFillingSlug(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100 shadow-sm">
@@ -178,6 +193,16 @@ export default function AdminFormsPage() {
                     {form.slug} · {form.page_count || '?'} pages · {form.field_count || 0} fields
                   </p>
                 </div>
+                <button
+                  onClick={() => fillForm(form.slug)}
+                  disabled={fillingSlug === form.slug}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                >
+                  {fillingSlug === form.slug
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <ExternalLink className="w-4 h-4" />}
+                  Fill Form
+                </button>
                 <Link
                   href={`/admin/forms/${form.slug}/mapper`}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
