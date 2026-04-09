@@ -218,7 +218,7 @@
     <h2>Add Field</h2>
     <label>Field Key</label>
     <div class="suggest-row">
-      <input type="text" id="modalKey" placeholder="e.g. seller_name" autocomplete="off">
+      <textarea id="modalKey" placeholder="e.g. seller_name" autocomplete="off" rows="3" style="resize:vertical;font-family:monospace;font-size:13px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;width:100%;box-sizing:border-box;line-height:1.4;"></textarea>
       <button class="btn-suggest" id="btnSuggest" onclick="suggestFieldId()" title="Look up nearby OCR text to suggest a field key">🔍 Suggest</button>
     </div>
     <p class="suggest-hint" id="suggestHint">OCR memory bank — finds nearby text and suggests a field key</p>
