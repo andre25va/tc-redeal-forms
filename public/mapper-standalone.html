@@ -701,6 +701,11 @@ async function suggestFieldId() {
     let bestScore = Infinity;
 
     for (const line of data) {
+      // Skip purely numeric lines (row/line numbers in left margin like "123", "138")
+      if (/^\d+$/.test(line.text.trim())) continue;
+      // Skip very short tokens (single letters, punctuation)
+      if (line.text.trim().length < 3) continue;
+
       const lcx = line.x + line.width / 2;
       const lcy = line.y + line.height / 2;
       const dist = Math.sqrt((lcx - cx) ** 2 + (lcy - cy) ** 2);
