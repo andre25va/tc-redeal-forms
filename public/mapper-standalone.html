@@ -696,9 +696,7 @@ async function suggestFieldId() {
     if (!data || data.length === 0) throw new Error('No OCR data for this page');
 
     // Determine section prefix from section_num column (no regex needed)
-    // NOTE: OCR y values are in PDF points; pendingRect.y is in 150 DPI pixels
-    // Scale factor: 150/72 ≈ 2.0833
-    const OCR_SCALE = 150 / 72;
+    // NOTE: OCR coords are already in 150 DPI pixel space — same as pendingRect. No scaling needed.
     let sectionPrefix = '';
     {
       // Find the section_num of the line closest above the drawn field
@@ -706,7 +704,7 @@ async function suggestFieldId() {
       let bestSecDist = Infinity;
       for (const line of data) {
         if (!line.section_num) continue;
-        const lineYpx = line.y * OCR_SCALE;
+        const lineYpx = parseFloat(line.y);
         if (lineYpx < pendingRect.y) {
           const dist = pendingRect.y - lineYpx;
           if (dist < bestSecDist) {
@@ -736,9 +734,9 @@ async function suggestFieldId() {
       const wordCount = tClean.split(/\s+/).filter(w => w.length > 1).length;
       if (wordCount < 3) continue;
 
-      // Scale OCR coords (PDF points) to 150 DPI pixel space for comparison with pendingRect
-      // Use vertical distance only — full-width lines have misleading center-X values
-      const lcy = (line.y + line.height / 2) * OCR_SCALE;
+      // OCR coords are already in 150 DPI pixel space — use vertical distance only
+      // (full-width lines have misleading center-X values)
+      const lcy = parseFloat(line.y) + parseFloat(line.height) / 2;
       const vertDist = Math.abs(lcy - cy);
 
       // Prefer lines ABOVE the drawn field (labels appear above inputs)
