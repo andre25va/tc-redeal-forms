@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { FormInvitation, FormSubmission } from '@/types'
-import { Plus, CheckCircle, Clock, AlertCircle, ExternalLink, Copy, MapPin, Eye, ShieldCheck, FileText, ChevronDown } from 'lucide-react'
+import { Plus, CheckCircle, Clock, AlertCircle, ExternalLink, Copy, MapPin, Eye, ShieldCheck, FileText, ChevronDown, ClipboardList } from 'lucide-react'
 
 type InvitationWithSubmissions = FormInvitation & {
   form_submissions?: Pick<FormSubmission, 'id' | 'submitted_at' | 'pdf_url' | 'last_saved_at'>[]
@@ -82,6 +82,9 @@ export default function AdminDashboard() {
             <a href="/admin/forms" className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
               <FileText className="w-4 h-4 text-indigo-500" /> Forms Manager
             </a>
+            <a href="/admin/submissions" className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+              <ClipboardList className="w-4 h-4 text-sky-500" /> Submissions
+            </a>
             <a href="/admin/mapper" className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
               <MapPin className="w-4 h-4 text-indigo-500" /> Legacy Mapper
             </a>
@@ -125,7 +128,6 @@ export default function AdminDashboard() {
           <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
             <h2 className="font-bold text-gray-900">Form Invitations</h2>
             <div className="flex items-center gap-3">
-              {/* Filter by form type */}
               <div className="relative">
                 <select
                   value={filterSlug}
@@ -338,7 +340,6 @@ function NewInvitationModal({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-4">
-            {/* Form type selector */}
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1.5">
                 Form Type <span className="text-red-500">*</span>
