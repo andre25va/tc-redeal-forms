@@ -27,9 +27,73 @@ export const FORM_SECTIONS: Record<string, FormSection[]> = {
     { key: 'other_matters',title: 'Other Matters',              titleEs: 'Otros Asuntos',                  prefixes: ['other_', 'sec16', 'elec_sys', 'electricCompany', 'electricPhone', 'gasPhone', 'gasCompany', 'waterCompany', 'waterPhone', 'trashPhone', 'trashCompany', 'otherUtility'] },
     { key: 'comments',     title: 'Additional Comments',        titleEs: 'Comentarios Adicionales',        prefixes: ['additionalComments'] },
   ],
+
+  'exclusive-right-to-sell': [
+    {
+      key: 'property_info',
+      title: 'Property & Listing Info',
+      titleEs: 'Información de la Propiedad',
+      prefixes: ['text_7b43', 'text_2271', 'text_66d2', 'text_09d6', 'text_ba8f', 'text_d851', 'text_2af3', 'text_9b4d', 'text_aafa', 'text_aa36', 'text_7d47', 'text_4614'],
+    },
+    {
+      key: 'mls_property_type',
+      title: 'MLS Entry & Property Type',
+      titleEs: 'Entrada MLS y Tipo de Propiedad',
+      prefixes: ['checkbox_72a7', 'text_6637', 'checkbox_50af', 'checkbox_6534', 'checkbox_a38e'],
+    },
+    {
+      key: 'marketing',
+      title: 'Marketing Distribution',
+      titleEs: 'Distribución de Mercadeo',
+      prefixes: ['checkbox_667d', 'checkbox_2cc6', 'checkbox_4c2b', 'checkbox_da12', 'checkbox_70ff', 'text_0b2a'],
+    },
+    {
+      key: 'seller_obligations',
+      title: 'Seller Obligations',
+      titleEs: 'Obligaciones del Vendedor',
+      prefixes: ['text_17d6'],
+    },
+    {
+      key: 'broker_authorization',
+      title: 'Broker Authorization to Disclose',
+      titleEs: 'Autorización al Corredor para Divulgar',
+      prefixes: ['checkbox_0b84', 'checkbox_b20b', 'checkbox_e3f8', 'checkbox_c1e8', 'checkbox_e36d'],
+    },
+    {
+      key: 'brokerage_relationships',
+      title: 'Brokerage Relationships',
+      titleEs: 'Relaciones de Corretaje',
+      prefixes: ['checkbox_63bb', 'checkbox_233e', 'checkbox_38d2', 'checkbox_8d52', 'checkbox_ff84', 'checkbox_93b4', 'checkbox_4bf8', 'checkbox_6d73', 'checkbox_ccc5', 'checkbox_e33b', 'checkbox_51cc', 'checkbox_bb1e'],
+    },
+    {
+      key: 'compensation',
+      title: 'Compensation',
+      titleEs: 'Compensación',
+      prefixes: ['text_553d', 'text_c328', 'text_fa0f', 'checkbox_0565', 'checkbox_de7d', 'text_1df4', 'text_b309'],
+    },
+    {
+      key: 'title_warranty',
+      title: 'Title & Home Warranty',
+      titleEs: 'Título y Garantía del Hogar',
+      prefixes: ['text_8bde', 'text_6089', 'text_324c', 'text_7098', 'text_aff6', 'text_df30', 'checkbox_b19f', 'checkbox_89af', 'text_45ab', 'checkbox_fc9f'],
+    },
+    {
+      key: 'additional_terms',
+      title: 'Additional Terms',
+      titleEs: 'Términos Adicionales',
+      prefixes: ['checkbox_457b', 'text_e03a', 'text_88f8', 'text_c470', 'text_0990'],
+    },
+    {
+      key: 'signatures',
+      title: 'Signatures & Contact Info',
+      titleEs: 'Firmas e Información de Contacto',
+      prefixes: ['text_a0fd', 'text_2780', 'text_fca0', 'text_a78e', 'text_c621', 'text_056c', 'text_f47a', 'text_5d08', 'text_f4d2', 'text_e9ad', 'text_e6cf', 'text_13d2', 'text_7fd1', 'text_4be4'],
+    },
+  ],
 }
 
 const FIELD_LABEL_MAP: Record<string, string> = {
+  // ── Seller Disclosure ──────────────────────────────────────────────────────
   sellerName1: 'Seller 1 Full Name',
   sellerName2: 'Seller 2 Full Name',
   propertyAddress: 'Property Address',
@@ -75,6 +139,120 @@ const FIELD_LABEL_MAP: Record<string, string> = {
   otherUtility1: 'Other utility name',
   otherUtilityPhone1: 'Other utility phone',
   additionalComments: 'Additional comments or disclosures',
+
+  // ── Exclusive Right to Sell ────────────────────────────────────────────────
+  // Section 1 – Property & Listing Info
+  text_7b43: 'Contract Date',
+  text_2271: 'Seller Name & Marital Status',
+  text_66d2: 'Broker / Brokerage Name',
+  text_09d6: 'Property Address',
+  text_ba8f: 'Legal Description Addendum Reference',
+  text_d851: 'Legal Description (Line 1)',
+  text_2af3: 'Legal Description (Line 2)',
+  text_9b4d: 'Legal Description (Line 3)',
+  text_aafa: 'Property Description / Parcel ID',
+  text_aa36: 'Listing Start Date',
+  text_7d47: 'Listing End Date',
+  text_4614: 'List Price ($)',
+
+  // Section 2 – MLS & Property Type
+  checkbox_72a7: 'Authorize delayed MLS entry (showings on hold until MLS active date)',
+  text_6637: 'MLS Active Date (if delayed entry)',
+  checkbox_50af: 'Property Type: Residential Resale',
+  checkbox_6534: 'Property Type: New Home Construction',
+  checkbox_a38e: 'Property Type: Land',
+
+  // Section 3 – Marketing Distribution
+  checkbox_667d: 'Active with Full Distribution',
+  checkbox_2cc6: 'Active with Limited Marketing Distribution',
+  checkbox_4c2b: 'Coming Soon with Full Distribution',
+  checkbox_da12: 'Coming Soon with No Distribution',
+  checkbox_70ff: 'Private Office Exclusive / No Distribution',
+  text_0b2a: 'Full Distribution Conversion Date',
+
+  // Section 4 – Seller Obligations
+  text_17d6: 'Forfeited Deposit Retained by Broker (%)',
+
+  // Section 5 – Broker Authorization
+  checkbox_0b84: 'Seller does NOT authorize broker to disclose reason for sale',
+  checkbox_b20b: 'Seller authorizes broker to disclose motivating factors for sale',
+  checkbox_e3f8: 'Seller does NOT authorize broker to disclose other offers',
+  checkbox_c1e8: 'Seller authorizes broker to disclose existence of other offers',
+  checkbox_e36d: 'Seller authorizes broker to disclose existence AND TERMS of other offers',
+
+  // Section 6 – Brokerage Relationships
+  checkbox_63bb: 'Seller Agency – Yes',
+  checkbox_233e: 'Seller Agency – No',
+  checkbox_38d2: 'Transaction Broker – Yes',
+  checkbox_8d52: 'Transaction Broker – No',
+  checkbox_ff84: 'Subagency – Yes',
+  checkbox_93b4: 'Subagency – No',
+  checkbox_4bf8: 'Dual Agency (Missouri only) – Yes',
+  checkbox_6d73: 'Dual Agency (Missouri only) – No',
+  checkbox_ccc5: 'Designated Agent for Seller (Kansas) – Yes',
+  checkbox_e33b: 'Designated Agent for Seller (Kansas) – No',
+  checkbox_51cc: 'Designated Agent for Buyer (Kansas) – Yes',
+  checkbox_bb1e: 'Designated Agent for Buyer (Kansas) – No',
+
+  // Section 7 – Compensation
+  text_553d: 'Compensation to Listing Broker (description)',
+  text_c328: 'Unrepresented Buyer – Additional Compensation',
+  text_fa0f: 'Total Compensation to Listing Broker',
+  checkbox_0565: 'Additional compensation applies if buyer is unrepresented',
+  checkbox_de7d: 'Other Compensation (check if applicable)',
+  text_1df4: 'Other Compensation Details',
+  text_b309: 'Protection Period (calendar days)',
+
+  // Section 8 – Title & Home Warranty
+  text_8bde: 'Title Evidence Through (company/source)',
+  text_6089: 'Title Vested in Name of',
+  text_324c: 'Title Vesting Detail (Line 1)',
+  text_7098: 'Title Vesting Detail (Line 2 — marital status, trust, LLC)',
+  text_aff6: 'Home Warranty – Max Cost (not to exceed $)',
+  text_df30: 'Home Warranty Vendor',
+  checkbox_b19f: 'Seller agrees to purchase a home warranty',
+  checkbox_89af: 'Seller does NOT agree to purchase a home warranty',
+  text_45ab: 'Home Warranty Amount ($)',
+  checkbox_fc9f: 'Seller does NOT agree to purchase a home warranty (alt)',
+
+  // Section 9 – Additional Terms
+  checkbox_457b: 'Franchise Disclosure (broker is a franchise member)',
+  text_e03a: 'Additional Terms & Conditions (Line 1)',
+  text_88f8: 'Additional Terms & Conditions (Line 2)',
+  text_c470: 'Additional Terms & Conditions (Line 3)',
+  text_0990: 'Additional Terms & Conditions (Line 4)',
+
+  // Section 10 – Signatures & Contact
+  text_a0fd: 'Brokerage Name',
+  text_2780: 'Seller 1 – Printed Name',
+  text_fca0: 'Seller 1 – Signature Date',
+  text_a78e: 'Licensee Assisting Seller',
+  text_c621: 'Licensee Date',
+  text_056c: 'Seller 2 – Printed Name',
+  text_f47a: 'Seller 2 – Signature Date',
+  text_5d08: 'Seller Address',
+  text_f4d2: 'Seller City, State, ZIP',
+  text_e9ad: 'Seller Phone',
+  text_e6cf: 'Seller Email',
+  text_13d2: 'Designated Agent Name (Line 1)',
+  text_7fd1: 'Designated Agent Name (Line 2)',
+  text_4be4: "Broker's Signature Name",
+
+  // Initials (page footers — shown but not in main sections)
+  text_bed0: 'Seller 1 Initials',
+  text_785a: 'Seller 2 Initials',
+  text_5a7b: 'Seller 1 Initials',
+  text_e2bb: 'Seller 2 Initials',
+  text_f99b: 'Seller 1 Initials',
+  text_9933: 'Seller 2 Initials',
+  text_a2c8: 'Seller 1 Initials',
+  text_365d: 'Seller 2 Initials',
+  text_c8f2: 'Seller 1 Initials',
+  text_9c24: 'Seller 2 Initials',
+  text_c5f0: 'Seller 1 Initials',
+  text_8d7c: 'Seller 2 Initials',
+  text_98e7: 'Seller 1 Initials',
+  text_6da7: 'Seller 2 Initials',
 }
 
 const CHOICE_LABELS: Record<string, string> = {
