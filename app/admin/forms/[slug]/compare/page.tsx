@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
@@ -243,7 +243,7 @@ export default function ComparePage() {
                       const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
                       const value = testData[f.field_key] || ''
 
-                      // Scale coordinates
+                      // Use exact PDF-point coordinates scaled to screen
                       const left = f.x * scale
                       const top = f.y * scale
                       const width = f.width * scale
@@ -276,15 +276,10 @@ export default function ComparePage() {
                         )
                       }
 
-                      // For text/sig/initial fields: show value with comfortable spacing
-                      // Use a min render height of 16px so text always has breathing room
-                      const renderH = Math.max(height, 16)
-                      // Shift upward by the extra height so bottom stays anchored to coordinate
-                      const renderTop = top - (renderH - height)
                       const isSig = f.is_signature || f.field_type === 'signature'
                       const isInit = f.is_initial || f.field_type === 'initial'
-                      // Comfortable font: min 8, max 11, not tied to box height
-                      const fontSize = Math.max(8, Math.min(11, 9 * scale))
+                      // Fixed 9pt font — readable at all zoom levels, fits within tight rows
+                      const fontSize = Math.max(7, Math.min(10, 9 * scale))
 
                       if (!value) {
                         return (
@@ -292,8 +287,8 @@ export default function ComparePage() {
                             key={f.field_key}
                             className="absolute"
                             style={{
-                              left, top: renderTop, width, height: renderH,
-                              borderBottom: `1px dashed ${color}30`,
+                              left, top, width, height,
+                              borderBottom: `1px dashed ${color}25`,
                             }}
                             title={f.field_key}
                           />
@@ -303,19 +298,23 @@ export default function ComparePage() {
                       return (
                         <div
                           key={f.field_key}
-                          className="absolute flex items-end overflow-hidden"
+                          className="absolute"
                           style={{
                             left,
-                            top: renderTop,
+                            top,
                             width,
-                            height: renderH,
-                            paddingLeft: 3,
+                            // Allow text to overflow downward — exact coords, no expansion
+                            height,
+                            overflow: 'visible',
+                            paddingLeft: 2,
                             paddingRight: 2,
-                            paddingBottom: 2,
+                            // Subtle field highlight
                             backgroundColor: isSig || isInit
-                              ? 'rgba(139,92,246,0.06)'
-                              : 'rgba(59,130,246,0.06)',
-                            borderBottom: `1px solid ${color}40`,
+                              ? 'rgba(139,92,246,0.07)'
+                              : 'rgba(59,130,246,0.07)',
+                            borderBottom: `1px solid ${color}35`,
+                            // Stack filled fields on top
+                            zIndex: 1,
                           }}
                           title={`${f.field_key}: ${value}`}
                         >
@@ -326,9 +325,9 @@ export default function ComparePage() {
                             color: isSig || isInit ? '#1e40af' : '#111827',
                             lineHeight: 1,
                             whiteSpace: 'nowrap',
-                            overflow: 'hidden',
                             display: 'block',
-                            maxWidth: '100%',
+                            // Position text at vertical center of field
+                            marginTop: Math.max(0, (height - fontSize) / 2),
                           }}>
                             {value}
                           </span>
