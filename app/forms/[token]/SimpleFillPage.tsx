@@ -206,7 +206,7 @@ function PreviewPanel({
                   top,
                   width,
                   height,
-                  background: 'rgba(219,234,254,0.92)',
+                  background: 'transparent',
                   fontSize: 9,
                   lineHeight: 1,
                   paddingLeft: 2,
@@ -214,6 +214,7 @@ function PreviewPanel({
                   fontFamily: 'Helvetica, Arial, sans-serif',
                   fontWeight: 600,
                   zIndex: 10,
+                  border: 'none',
                 }}
               >
                 {val}
