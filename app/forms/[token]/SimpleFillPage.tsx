@@ -1,5 +1,5 @@
 'use client'
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Send, ArrowLeft, MapPin, Eye, EyeOff, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { FORM_SECTIONS, groupFieldsForSection } from '@/lib/formSections'
 
@@ -92,11 +92,19 @@ function PreviewPanel({
     setPage(currentSectionPage)
   }, [currentSectionPage])
 
-  // measure container width for scaling
+  // measure container width for scaling — useLayoutEffect ensures we catch it synchronously
+  useLayoutEffect(() => {
+    if (containerRef.current) {
+      const w = containerRef.current.offsetWidth
+      if (w > 0) setContainerW(w)
+    }
+  }, [loading]) // re-measure after loading completes (element may resize)
+
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver(entries => {
-      setContainerW(entries[0].contentRect.width)
+      const w = entries[0].contentRect.width
+      if (w > 0) setContainerW(w)
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
@@ -204,6 +212,7 @@ function PreviewPanel({
                   paddingLeft: 1,
                   color: '#111',
                   fontFamily: 'Helvetica, Arial, sans-serif',
+                  zIndex: 2,
                 }}
               >
                 {val}
