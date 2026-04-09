@@ -208,25 +208,38 @@ export default function PreviewPage() {
                   const borderColor = TYPE_BORDER[f.field_type || 'text'] || '#3b82f6'
                   const value = testData[f.field_key] || ''
 
+                  // ── Checkbox: render clickable box with X mark when checked ──
                   if (isCheckbox) {
+                    const checked = value === 'true'
+                    const boxSize = Math.min(width * 0.85, height * 0.85)
                     return (
                       <div
                         key={f.field_key}
-                        className="absolute flex items-center justify-center pointer-events-auto"
+                        className="absolute flex items-center justify-center pointer-events-auto cursor-pointer"
                         style={{ left, top, width, height }}
+                        onClick={() => handleChange(f.field_key, checked ? '' : 'true')}
+                        title={f.field_key}
                       >
-                        <input
-                          type="checkbox"
-                          checked={value === 'true'}
-                          onChange={e => handleChange(f.field_key, e.target.checked ? 'true' : '')}
-                          className="cursor-pointer"
+                        <div
                           style={{
-                            width: Math.min(width * 0.85, height * 0.85),
-                            height: Math.min(width * 0.85, height * 0.85),
-                            accentColor: borderColor,
+                            width: boxSize,
+                            height: boxSize,
+                            border: `1.5px solid ${borderColor}`,
+                            borderRadius: 1,
+                            position: 'relative',
+                            backgroundColor: 'white',
                           }}
-                          title={f.field_key}
-                        />
+                        >
+                          {checked && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                            >
+                              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="#111" strokeWidth="1.8" strokeLinecap="round" />
+                              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="#111" strokeWidth="1.8" strokeLinecap="round" />
+                            </svg>
+                          )}
+                        </div>
                       </div>
                     )
                   }

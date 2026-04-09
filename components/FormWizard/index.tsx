@@ -172,6 +172,16 @@ function LanguageToggle({
   )
 }
 
+// ── X Mark SVG (matches PDF baked output) ────────────────────────────────────
+function XMark() {
+  return (
+    <svg viewBox="0 0 10 10" className="absolute inset-0 w-full h-full" style={{ padding: '1px' }}>
+      <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="#111" strokeWidth="2" strokeLinecap="round" />
+      <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="#111" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function FormWizard({ sections, token, initialData, invitation, isDemo, initialLanguage, onLanguageChange }: FormWizardProps) {
   const [currentStep, setCurrentStep] = useState(0)
@@ -318,13 +328,13 @@ export default function FormWizard({ sections, token, initialData, invitation, i
           <button
             type="button"
             onClick={() => setFieldValue(field.key, !checked)}
-            className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+            className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all relative ${
               checked
-                ? 'bg-indigo-600 border-indigo-600'
-                : 'bg-white border-gray-300 hover:border-indigo-400'
+                ? 'bg-white border-gray-500'
+                : 'bg-white border-gray-300 hover:border-gray-500'
             }`}
           >
-            {checked && <CheckCircle className="w-3 h-3 text-white" />}
+            {checked && <XMark />}
           </button>
           <label
             onClick={() => setFieldValue(field.key, !checked)}
@@ -537,7 +547,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                           <span className="text-gray-400 w-28 sm:w-40 shrink-0 text-xs pt-0.5 leading-tight">{field.label}</span>
                           <span className="text-gray-900 font-medium text-xs flex-1 min-w-0 break-words">
                             {field.type === 'checkbox'
-                              ? (formData[field.key] ? '✓ Yes' : '—')
+                              ? (formData[field.key] ? '✗ Yes' : '—')
                               : String(formData[field.key] || '').slice(0, 80)}
                           </span>
                         </div>
