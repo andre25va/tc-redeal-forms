@@ -127,10 +127,18 @@ export default function AdminFormsPage() {
   const fillForm = async (slug: string) => {
     setFillingSlug(slug)
     try {
-      const res = await fetch(`/api/invitations?form_slug=${slug}`, { method: 'POST' })
+      const res = await fetch('/api/invitations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seller_email: 'tc@myredeal.com',
+          seller_name: 'Test Fill',
+          form_slug: slug,
+        }),
+      })
       const data = await res.json()
-      if (!data.token) throw new Error(data.error || 'No token returned')
-      window.open(`/forms/${data.token}`, '_blank')
+      if (!data.formUrl) throw new Error(data.error || 'No form URL returned')
+      window.open(data.formUrl, '_blank')
     } catch (err) {
       alert('Could not open form: ' + (err as Error).message)
     } finally {
