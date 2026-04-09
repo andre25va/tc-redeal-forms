@@ -7,12 +7,12 @@ import { PdfField } from '@/types'
  * Fills a PDF template with form data.
  *
  * Strategy:
- *   1. If the PDF was "baked" (has AcroForm fields), fill by field name — 
- *      pixel-perfect, no coordinate math.
- *   2. For any field NOT in the AcroForm (fallback), draw text directly at
- *      the stored x/y coordinates.
- *   3. Signatures (data-URL PNGs) are always drawn as embedded images.
- *   4. Flatten the AcroForm at the end so the PDF is non-editable.
+ *   1. If the PDF was "baked" (has AcroForm fields), fill text by field name.
+ *   2. Checkboxes: NEVER call cb.check() — instead track positions and draw
+ *      real X marks (two diagonal lines) AFTER form.flatten() so they sit on top.
+ *   3. Fallback fields (not in AcroForm) get coordinate-based text/X drawing.
+ *   4. Signatures (data-URL PNGs) are embedded as images.
+ *   5. Flatten the AcroForm at the end (empty checkbox "off" state = plain box outline).
  */
 export async function overlayFormData(
   pdfBytes: Uint8Array,
@@ -29,6 +29,9 @@ export async function overlayFormData(
 
   // Expand yes/no/na string values into individual _yes/_no/_na checkbox keys
   const expandedFormData = expandYesNoNa(formData, acroFieldNames)
+
+  // Track checkbox positions for X drawing (done after flatten)
+  const checkedBoxes: PdfField[] = []
 
   // Collect signatures for image overlay (done after AcroForm fill)
   const signatureQueue: PdfField[] = []
@@ -49,8 +52,11 @@ export async function overlayFormData(
     if (acroFieldNames.has(field.key)) {
       try {
         if (field.type === 'checkbox') {
+          // Don't call cb.check() — we draw X marks after flatten instead
+          // Always ensure "off" state so flatten renders empty box
           const cb = form.getCheckBox(field.key)
-          value ? cb.check() : cb.uncheck()
+          cb.uncheck()
+          if (value) checkedBoxes.push(field)
         } else {
           const tf = form.getTextField(field.key)
           tf.setText(formatValue(field, value))
@@ -68,15 +74,60 @@ export async function overlayFormData(
     const page = pages[field.page - 1]
     if (!page) continue
 
-    const fontSize = field.fontSize ?? 9
-    const color    = rgb(0, 0, 0)
-    const text     = formatValue(field, value)
-
-    if (field.type === 'textarea') {
-      drawWrappedText(page, text, field.x, field.y, field.width ?? 400, fontSize, font, color)
+    if (field.type === 'checkbox') {
+      // Track for X drawing below (same path as AcroForm checkboxes)
+      if (value) checkedBoxes.push(field)
     } else {
-      page.drawText(text, { x: field.x, y: field.y, size: fontSize, font, color })
+      const fontSize = field.fontSize ?? 9
+      const color    = rgb(0, 0, 0)
+      const text     = formatValue(field, value)
+
+      if (field.type === 'textarea') {
+        drawWrappedText(page, text, field.x, field.y, field.width ?? 400, fontSize, font, color)
+      } else {
+        page.drawText(text, { x: field.x, y: field.y, size: fontSize, font, color })
+      }
     }
+  }
+
+  // ── Flatten AcroForm BEFORE drawing X marks ────────────────────────────────
+  // Empty (unchecked) checkboxes flatten to plain box outlines.
+  // X marks drawn after flatten sit on top and are never obscured.
+  if (acroFieldNames.size > 0) {
+    try {
+      form.flatten()
+    } catch (err) {
+      console.warn('[overlay] AcroForm flatten failed:', err)
+    }
+  }
+
+  // ── Draw X marks (two diagonal lines) for all checked checkboxes ───────────
+  for (const field of checkedBoxes) {
+    const page = pages[(field.page ?? 1) - 1]
+    if (!page || !field.x || !field.y) continue
+
+    const w   = field.width  ?? 8
+    const h   = field.height ?? 8
+    const pad = 1.5
+    const x0  = field.x + pad
+    const y0  = field.y + pad
+    const x1  = field.x + w - pad
+    const y1  = field.y + h - pad
+
+    // ╲ diagonal
+    page.drawLine({
+      start:     { x: x0, y: y0 },
+      end:       { x: x1, y: y1 },
+      thickness: 1.2,
+      color:     rgb(0, 0, 0),
+    })
+    // ╱ diagonal
+    page.drawLine({
+      start:     { x: x1, y: y0 },
+      end:       { x: x0, y: y1 },
+      thickness: 1.2,
+      color:     rgb(0, 0, 0),
+    })
   }
 
   // ── Embed signature images ─────────────────────────────────────────────────
@@ -97,15 +148,6 @@ export async function overlayFormData(
       })
     } catch (err) {
       console.warn(`[overlay] Signature embed failed for "${field.key}":`, err)
-    }
-  }
-
-  // ── Flatten AcroForm (makes it a static, non-editable PDF) ──────────────────
-  if (acroFieldNames.size > 0) {
-    try {
-      form.flatten()
-    } catch (err) {
-      console.warn('[overlay] AcroForm flatten failed:', err)
     }
   }
 
@@ -225,7 +267,6 @@ export async function generateSummaryPdf(
   })
   y -= lineHeight * 1.5
 
-  // Group by section
   const sectionMap = new Map<string, PdfField[]>()
   for (const f of fields) {
     const arr = sectionMap.get(f.section) ?? []
