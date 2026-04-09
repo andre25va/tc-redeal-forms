@@ -701,10 +701,13 @@ async function suggestFieldId() {
     let bestScore = Infinity;
 
     for (const line of data) {
-      // Skip purely numeric lines (row/line numbers in left margin like "123", "138")
-      if (/^\d+$/.test(line.text.trim())) continue;
-      // Skip very short tokens (single letters, punctuation)
-      if (line.text.trim().length < 3) continue;
+      const t = line.text.trim();
+      // Skip purely numeric lines (standalone row numbers)
+      if (/^\d+$/.test(t)) continue;
+      // Skip blank fill lines (underscores, dots, dashes, digits, spaces only)
+      if (/^[\d\s_\-\.…]+$/.test(t)) continue;
+      // Skip very short tokens
+      if (t.length < 4) continue;
 
       const lcx = line.x + line.width / 2;
       const lcy = line.y + line.height / 2;
@@ -722,9 +725,11 @@ async function suggestFieldId() {
 
     if (!best) throw new Error('No nearby text found');
 
-    const suggestion = textToFieldKey(best.text, document.getElementById('modalType').value);
+    // Strip leading line number (e.g. "112 g. Any problems..." -> "g. Any problems...")
+    const cleanText = best.text.replace(/^\d+\s+/, '');
+    const suggestion = textToFieldKey(cleanText, document.getElementById('modalType').value);
     document.getElementById('modalKey').value = suggestion;
-    hint.textContent = '✓ From: "' + best.text.slice(0, 55) + (best.text.length > 55 ? '…' : '') + '"';
+    hint.textContent = '✓ From: "' + cleanText.slice(0, 55) + (cleanText.length > 55 ? '…' : '') + '"';
     hint.style.color = '#166534';
     btn.textContent = '🔍 Re-suggest';
   } catch(e) {
