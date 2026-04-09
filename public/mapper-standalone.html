@@ -26,6 +26,9 @@
   .btn-secondary:hover { background: #e2e8f0; }
   .btn-danger { background: #fff5f5; color: #e53e3e; border: 1px solid #fed7d7; }
   .btn-danger:hover { background: #fed7d7; }
+  .btn-suggest { background: #f0fdf4; color: #166534; border: 1px solid #86efac; height: 28px; padding: 0 10px; font-size: 11px; border-radius: 5px; }
+  .btn-suggest:hover { background: #dcfce7; }
+  .btn-suggest:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .sep { width: 1px; height: 22px; background: #e2e8f0; margin: 0 2px; }
   .page-info { font-size: 12px; color: #718096; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0 10px; height: 30px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -99,13 +102,18 @@
   /* Modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
   .modal-bg.hidden { display: none; }
-  .modal { background: white; border-radius: 12px; padding: 24px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .modal { background: white; border-radius: 12px; padding: 24px; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
   .modal h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
   .modal label { display: block; font-size: 12px; font-weight: 600; color: #4a5568; margin-bottom: 3px; }
   .modal input, .modal select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
   .modal input:focus, .modal select:focus { outline: none; border-color: #e94560; }
   .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
   .modal .checkrow { margin-bottom: 8px; }
+
+  /* Suggest row */
+  .suggest-row { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+  .suggest-row input { margin-bottom: 0; flex: 1; }
+  .suggest-hint { font-size: 10px; color: #a0aec0; margin-top: -10px; margin-bottom: 10px; }
 
   /* Toast */
   .toast { position: fixed; bottom: 20px; right: 20px; background: #1a1a2e; color: white; padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 2000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
@@ -210,7 +218,11 @@
   <div class="modal">
     <h2>Add Field</h2>
     <label>Field Key</label>
-    <input type="text" id="modalKey" placeholder="e.g. seller_name" autocomplete="off">
+    <div class="suggest-row">
+      <input type="text" id="modalKey" placeholder="e.g. seller_name" autocomplete="off">
+      <button class="btn-suggest" id="btnSuggest" onclick="suggestFieldId()" title="Ask AI to suggest a field key based on the PDF content">✨ Suggest</button>
+    </div>
+    <p class="suggest-hint" id="suggestHint">AI reads the PDF text near this field and suggests a key</p>
     <label>Type</label>
     <select id="modalType">
       <option value="text">Text</option>
@@ -627,6 +639,11 @@ function openAddModal() {
   document.getElementById('modalSig').checked = false;
   document.getElementById('modalInit').checked = false;
   document.getElementById('modalReq').checked = false;
+  document.getElementById('suggestHint').textContent = 'AI reads the PDF text near this field and suggests a key';
+  document.getElementById('suggestHint').style.color = '#a0aec0';
+  const btn = document.getElementById('btnSuggest');
+  btn.textContent = '✨ Suggest';
+  btn.disabled = false;
   document.getElementById('addModal').classList.remove('hidden');
   document.getElementById('modalKey').focus();
 }
@@ -658,6 +675,51 @@ function confirmAdd() {
   rebuildSvg();
   updateFieldList();
   updatePropsPanel();
+}
+
+// ── AI Field ID Suggestion ────────────────────────────────
+async function suggestFieldId() {
+  if (!pendingRect || !currentForm) return;
+  const btn = document.getElementById('btnSuggest');
+  const hint = document.getElementById('suggestHint');
+  btn.disabled = true;
+  btn.textContent = '⏳ Thinking…';
+  hint.textContent = 'Reading the PDF…';
+  hint.style.color = '#718096';
+
+  try {
+    // Determine base URL — works whether running in iframe or standalone
+    const baseUrl = window.location !== window.parent.location
+      ? document.referrer ? new URL(document.referrer).origin : window.location.origin
+      : window.location.origin;
+
+    const res = await fetch('/api/mapper/suggest-field-id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        form_slug: FORM_PAGES[currentForm].slug,
+        page_num: currentPage,
+        x: pendingRect.x,
+        y: pendingRect.y,
+        w: pendingRect.w,
+        h: pendingRect.h,
+        field_type: document.getElementById('modalType').value,
+        base_url: baseUrl
+      })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    document.getElementById('modalKey').value = data.suggestion;
+    hint.textContent = '✓ Suggestion filled in — edit if needed';
+    hint.style.color = '#166534';
+    btn.textContent = '✨ Re-suggest';
+  } catch(e) {
+    hint.textContent = '⚠ ' + (e.message || 'Suggestion failed');
+    hint.style.color = '#c53030';
+    btn.textContent = '✨ Suggest';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Properties Panel ──────────────────────────────────────
