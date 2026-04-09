@@ -18,12 +18,10 @@ import { PdfField } from '@/types'
 /** Returns true only for explicitly affirmative values — prevents 'no'/'false' strings
  *  from being treated as truthy and incorrectly drawing a checkmark. */
 function isAffirmative(value: unknown): boolean {
-  if (value === true || value === 1) return true
-  if (typeof value === 'string') {
-    const v = value.toLowerCase().trim()
-    return v === 'true' || v === 'yes' || v === '1' || v === 'checked'
-  }
-  return false
+  // Any non-empty value checks the box — Yes and No are separate checkbox fields on the PDF
+  if (value === null || value === undefined) return false
+  if (typeof value === 'boolean') return value
+  return String(value).trim() !== ''
 }
 
 export async function overlayFormData(
