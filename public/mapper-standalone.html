@@ -695,6 +695,25 @@ async function suggestFieldId() {
     if (error) throw error;
     if (!data || data.length === 0) throw new Error('No OCR data for this page');
 
+    // Find nearest section header above the drawn field
+    // Section headers match: "126 9. ADDITIONS AND/OR REMODELING."
+    let sectionPrefix = '';
+    {
+      let bestSec = null;
+      let bestSecDist = Infinity;
+      for (const line of data) {
+        const secMatch = line.text.trim().match(/^\d+\s+(\d+)\.\s+[A-Z]/);
+        if (secMatch && line.y < pendingRect.y) {
+          const dist = pendingRect.y - line.y;
+          if (dist < bestSecDist) {
+            bestSecDist = dist;
+            bestSec = secMatch[1];
+          }
+        }
+      }
+      if (bestSec) sectionPrefix = 'sec_' + bestSec + '_';
+    }
+
     // Find closest line by weighted distance
     // Prefer lines immediately above or to the left of the drawn box
     let best = null;
@@ -732,9 +751,10 @@ async function suggestFieldId() {
 
     // Strip leading line number (e.g. "112 g. Any problems..." -> "g. Any problems...")
     const cleanText = best.text.replace(/^\d+\s+/, '');
-    const suggestion = textToFieldKey(cleanText, document.getElementById('modalType').value);
+    const baseKey = textToFieldKey(cleanText, document.getElementById('modalType').value);
+    const suggestion = sectionPrefix + baseKey;
     document.getElementById('modalKey').value = suggestion;
-    hint.textContent = '✓ From: "' + cleanText.slice(0, 55) + (cleanText.length > 55 ? '…' : '') + '"';
+    hint.textContent = '✓ From: "' + (sectionPrefix ? '[' + sectionPrefix + '] ' : '') + cleanText.slice(0, 50) + (cleanText.length > 50 ? '…' : '') + '"';
     hint.style.color = '#166534';
     btn.textContent = '🔍 Re-suggest';
   } catch(e) {
