@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { PDFDocument, PDFName } from 'pdf-lib'
 import { createServiceClient } from '@/lib/supabase'
-import { SELLER_DISCLOSURE_FIELDS } from '@/lib/forms/seller-disclosure/fields'
 
 export const maxDuration = 60
 
@@ -12,8 +11,18 @@ export const maxDuration = 60
  * widgets at the positions stored in field_coordinates, then saves the result
  * as the fillable template (seller-disclosure/template.pdf).
  *
- * After baking, form submissions can fill fields by name — no coordinate math.
+ * Fully dynamic — no hardcoded field definitions required.
+ * Any field drawn in the mapper and saved to Supabase will be baked automatically.
+ *
+ * Coordinate system: field_coordinates stores pixel positions at 150 DPI.
+ * PDF uses points at 72 DPI. Conversion: pts = px * (72/150) = px * 0.48
+ * PDF y-axis is bottom-up; image y-axis is top-down.
+ * Formula: pdf_y = page_height_pts - (pixel_y * scale) - (field_height_pts)
  */
+
+const PX_TO_PT = 72 / 150  // 0.48
+const PAGE_H_PT = 792       // standard letter page height in points
+
 export async function POST() {
   try {
     const supabase = createServiceClient()
@@ -33,11 +42,12 @@ export async function POST() {
     const originalBytes = new Uint8Array(await originalFile.arrayBuffer())
     const pdfDoc = await PDFDocument.load(originalBytes)
 
-    // ── 2. Load field coordinates ──────────────────────────────────────────
+    // ── 2. Load ALL field coordinates from Supabase ────────────────────────
     const { data: coords, error: coordError } = await supabase
       .from('field_coordinates')
       .select('*')
       .eq('form_slug', 'seller-disclosure')
+      .order('page_num', { ascending: true })
 
     if (coordError || !coords || coords.length === 0) {
       return NextResponse.json(
@@ -46,32 +56,39 @@ export async function POST() {
       )
     }
 
-    // ── 3. Build lookup: field_key → field definition ──────────────────────
-    const fieldDefs = new Map(SELLER_DISCLOSURE_FIELDS.map(f => [f.key, f]))
     const pages = pdfDoc.getPages()
     const form = pdfDoc.getForm()
+
+    // Track used field names — AcroForm requires unique names
+    const usedNames = new Set<string>()
 
     let added = 0
     let skipped = 0
 
     for (const coord of coords) {
-      const def = fieldDefs.get(coord.field_key)
-      if (!def) { skipped++; continue }
-
       const pageIndex = (coord.page_num ?? 1) - 1
       const page = pages[pageIndex]
       if (!page) { skipped++; continue }
 
-      const x = coord.x ?? 0
-      const y = coord.y ?? 0
-      const w = Math.max(coord.width ?? 80, 10)
-      const h = Math.max(coord.height ?? 14, 8)
-      const fontSize = coord.font_size ?? 9
+      // Convert pixel coords → PDF points
+      const x  = (coord.x  ?? 0) * PX_TO_PT
+      const w  = Math.max((coord.width  ?? 80) * PX_TO_PT, 8)
+      const h  = Math.max((coord.height ?? 14) * PX_TO_PT, 6)
+      // PDF y is bottom-up; image y is top-down
+      const y  = PAGE_H_PT - (coord.y ?? 0) * PX_TO_PT - h
+
+      // Ensure unique AcroForm field name
+      let fieldName = coord.field_key
+      if (usedNames.has(fieldName)) {
+        fieldName = `${fieldName}_p${coord.page_num}`
+      }
+      usedNames.add(fieldName)
 
       try {
-        if (def.type === 'checkbox') {
-          // ── Checkbox widget ──────────────────────────────────────────────
-          const field = form.createCheckBox(coord.field_key)
+        const fieldType = coord.field_type ?? 'text'
+
+        if (fieldType === 'checkbox') {
+          const field = form.createCheckBox(fieldName)
           field.addToPage(page, {
             x, y,
             width: w,
@@ -79,26 +96,23 @@ export async function POST() {
             borderWidth: 1,
           })
         } else {
-          // ── Text field (covers text, textarea, choice, fixture_status, date, signature) ──
-          const field = form.createTextField(coord.field_key)
+          // text, textarea, initial, signature, choice — all become text fields
+          const field = form.createTextField(fieldName)
           field.addToPage(page, {
             x, y,
             width: w,
             height: h,
-            borderWidth: 0,          // invisible border — field overlays PDF text areas
-            borderColor: undefined,
-            backgroundColor: undefined,
+            borderWidth: 0,
           })
-          field.setFontSize(fontSize)
+          field.setFontSize(coord.font_size ?? 9)
 
-          if (def.type === 'textarea') {
+          if (fieldType === 'textarea') {
             field.enableMultiline()
           }
 
-          // Make field transparent background so the PDF visual shines through
+          // Transparent background so PDF artwork shows through
           const widgets = field.acroField.getWidgets()
           for (const widget of widgets) {
-            // Set appearance characteristics: no background fill
             const mk = widget.getOrCreateAppearanceCharacteristics()
             mk.dict.set(PDFName.of('BG'), pdfDoc.context.obj([]))
           }
@@ -106,12 +120,12 @@ export async function POST() {
 
         added++
       } catch (err) {
-        console.warn(`[bake] Failed to add field "${coord.field_key}":`, err)
+        console.warn(`[bake] Failed to add field "${fieldName}":`, err)
         skipped++
       }
     }
 
-    // ── 4. Save baked PDF ──────────────────────────────────────────────────
+    // ── 3. Save baked PDF ──────────────────────────────────────────────────
     const bakedBytes = await pdfDoc.save({ useObjectStreams: false })
 
     const { error: uploadError } = await supabase.storage
@@ -127,7 +141,7 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: `Baked ${added} AcroForm fields into template PDF.${skipped ? ` (${skipped} skipped)` : ''}`,
+      message: `Baked ${added} AcroForm fields into template PDF.${skipped ? ` (${skipped} skipped — duplicate names or missing page)` : ''}`,
       added,
       skipped,
     })
