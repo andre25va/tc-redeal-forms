@@ -27,11 +27,14 @@ export async function overlayFormData(
   // Build a set of field names that exist in the baked AcroForm
   const acroFieldNames = new Set(form.getFields().map(f => f.getName()))
 
+  // Expand yes/no/na string values into individual _yes/_no/_na checkbox keys
+  const expandedFormData = expandYesNoNa(formData, acroFieldNames)
+
   // Collect signatures for image overlay (done after AcroForm fill)
   const signatureQueue: PdfField[] = []
 
   for (const field of fields) {
-    const value = formData[field.key]
+    const value = expandedFormData[field.key]
     if (value === undefined || value === null || value === '') continue
 
     // ── Signature: always image overlay ─────────────────────────────────────
@@ -107,6 +110,35 @@ export async function overlayFormData(
   }
 
   return pdfDoc.save()
+}
+
+
+/**
+ * expandYesNoNa
+ *
+ * Converts shorthand yes/no/na values into individual boolean checkbox keys.
+ * Example: { land_a: 'yes' } → { land_a: 'yes', land_a_yes: true, land_a_no: false, land_a_na: false }
+ * Only expands when the _yes / _no / _na variant actually exists in the baked AcroForm.
+ */
+function expandYesNoNa(
+  formData: Record<string, unknown>,
+  acroFieldNames: Set<string>
+): Record<string, unknown> {
+  const expanded = { ...formData }
+  for (const [key, value] of Object.entries(formData)) {
+    if (typeof value !== 'string') continue
+    const norm = value.toLowerCase().trim()
+    if (norm !== 'yes' && norm !== 'no' && norm !== 'na') continue
+    const yesKey = `${key}_yes`
+    const noKey  = `${key}_no`
+    const naKey  = `${key}_na`
+    if (acroFieldNames.has(yesKey) || acroFieldNames.has(noKey) || acroFieldNames.has(naKey)) {
+      expanded[yesKey] = norm === 'yes'
+      expanded[noKey]  = norm === 'no'
+      if (acroFieldNames.has(naKey)) expanded[naKey] = norm === 'na'
+    }
+  }
+  return expanded
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

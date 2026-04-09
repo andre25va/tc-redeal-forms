@@ -113,6 +113,14 @@
   .toast.error { background: #c53030; }
   .toast.success { background: #276749; }
 
+
+  /* Page ID bar */
+  .page-id-bar { padding: 7px 12px; border-bottom: 1px solid #e2e8f0; background: #f7fafc; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .page-id-label { font-size: 9px; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1; margin-bottom: 2px; }
+  .page-id-value { font-size: 12px; font-weight: 700; color: #2d3748; font-family: monospace; letter-spacing: 0.3px; }
+  .page-id-copy { background: none; border: 1px solid #cbd5e0; border-radius: 4px; cursor: pointer; font-size: 12px; padding: 2px 5px; color: #718096; transition: all 0.15s; margin-left: auto; flex-shrink: 0; }
+  .page-id-copy:hover { background: #edf2f7; color: #1a1a2e; border-color: #a0aec0; }
+  .page-id-copy.copied { background: #c6f6d5; color: #276749; border-color: #9ae6b4; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: #f1f1f1; }
   ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
@@ -161,6 +169,10 @@
   <div class="sidebar">
     <div class="sidebar-header">
       Fields <span id="fieldCount" style="font-weight:400;color:#718096"></span>
+    </div>
+    <div class="page-id-bar" id="pageIdBar" style="display:none">
+      <div style="flex:1;min-width:0"><div class="page-id-label">Page ID</div><div class="page-id-value" id="pageIdValue">—</div></div>
+      <button class="page-id-copy" id="pageIdCopyBtn" onclick="copyPageId()" title="Copy page ID">📋 Copy</button>
     </div>
     <div class="field-list" id="fieldList"></div>
     <div class="props-panel" id="propsPanel" style="display:none">
@@ -364,6 +376,7 @@ function renderPage() {
 
   pageFields = allFields.filter(f => f.page === currentPage);
   document.getElementById('pageInfo').textContent = `Page ${currentPage} | ${pageFields.length} fields`;
+  updatePageIdBar();
 }
 
 function buildSvg(container, img) {
@@ -841,6 +854,32 @@ function updateFieldList() {
   const total = allFields.filter(f => f.page === currentPage).length;
   document.getElementById('fieldCount').textContent = `(${total} on page · ${allFields.length} total)`;
   document.getElementById('pageInfo').textContent = `Page ${currentPage} | ${total} fields`;
+}
+
+
+// ── Page ID bar ───────────────────────────────────────────
+function updatePageIdBar() {
+  if (!currentForm) return;
+  const shortMap = { 'seller-disclosure': 'sd', 'residential-sale-contract': 'pc' };
+  const short = shortMap[currentForm] || currentForm;
+  const id = `${short}-p${currentPage}`;
+  document.getElementById('pageIdValue').textContent = id;
+  document.getElementById('pageIdBar').style.display = 'flex';
+  document.getElementById('pageIdCopyBtn').className = 'page-id-copy';
+  document.getElementById('pageIdCopyBtn').textContent = '📋 Copy';
+}
+
+function copyPageId() {
+  const id = document.getElementById('pageIdValue').textContent;
+  navigator.clipboard.writeText(id).then(() => {
+    const btn = document.getElementById('pageIdCopyBtn');
+    btn.textContent = '✓ Copied';
+    btn.className = 'page-id-copy copied';
+    setTimeout(() => {
+      btn.textContent = '📋 Copy';
+      btn.className = 'page-id-copy';
+    }, 1800);
+  }).catch(() => showToast('Copy failed', 'error'));
 }
 
 // ── Toast ─────────────────────────────────────────────────
