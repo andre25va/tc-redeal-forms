@@ -1,6 +1,5 @@
 import { createServiceClient } from '@/lib/supabase'
-import { SELLER_DISCLOSURE_SECTIONS } from '@/lib/forms/seller-disclosure/config'
-import FormClient from './FormClient'
+import PdfFillPage from './PdfFillPage'
 
 export default async function FormPage({ params }: { params: { token: string } }) {
   const supabase = createServiceClient()
@@ -43,7 +42,7 @@ export default async function FormPage({ params }: { params: { token: string } }
     )
   }
 
-  if (new Date(invitation.expires_at) < new Date()) {
+  if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center max-w-md">
@@ -59,7 +58,35 @@ export default async function FormPage({ params }: { params: { token: string } }
     )
   }
 
-  // Load saved data
+  // Load form template (generic — works for any form_slug)
+  const { data: formTemplate } = await supabase
+    .from('form_templates')
+    .select('name, pdf_template_path, page_count')
+    .eq('slug', invitation.form_slug)
+    .single()
+
+  if (!formTemplate) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="text-center max-w-md">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Form Configuration Error</h1>
+          <p className="text-gray-500">This form type is not configured. Please contact your agent.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const pdfUrl = `${supabaseUrl}/storage/v1/object/public/form-templates/${formTemplate.pdf_template_path}`
+
+  // Load field coordinates for this form
+  const { data: fields } = await supabase
+    .from('field_coordinates')
+    .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial, required')
+    .eq('form_slug', invitation.form_slug)
+    .order('page_num', { ascending: true })
+
+  // Load any previously saved data
   const { data: submission } = await supabase
     .from('form_submissions')
     .select('form_data')
@@ -69,10 +96,13 @@ export default async function FormPage({ params }: { params: { token: string } }
     .single()
 
   return (
-    <FormClient
-      sections={SELLER_DISCLOSURE_SECTIONS}
+    <PdfFillPage
       token={params.token}
-      initialData={(submission?.form_data as Record<string, unknown>) || {}}
+      formName={formTemplate.name}
+      pdfUrl={pdfUrl}
+      pageCount={formTemplate.page_count}
+      fields={fields || []}
+      savedData={(submission?.form_data as Record<string, unknown>) || {}}
       invitation={{
         seller_name: invitation.seller_name,
         property_address: invitation.property_address,

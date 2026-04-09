@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
-import { SELLER_DISCLOSURE_FIELDS } from '@/lib/forms/seller-disclosure/fields'
 import { overlayFormData, generateSummaryPdf } from '@/lib/pdf/overlay'
 import { sendFormCompletionEmails } from '@/lib/email'
 import { PdfField } from '@/types'
+
+// PDF page height in points (letter size = 8.5" × 11" at 72 DPI)
+const PAGE_H_PT = 792
 
 export async function POST(req: NextRequest, { params }: { params: { token: string } }) {
   try {
     const { form_data } = await req.json()
     const supabase = createServiceClient()
 
-    // Load invitation
+    // ── Load invitation ──────────────────────────────────────────────────────
     const { data: invitation, error: invError } = await supabase
       .from('form_invitations')
       .select('*')
@@ -24,90 +26,64 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
       return NextResponse.json({ error: 'Already submitted' }, { status: 410 })
     }
 
-    // Get existing submission
+    const formSlug: string = invitation.form_slug
+
+    // ── Get existing submission (if any) ────────────────────────────────────
     const { data: existingSubmission } = await supabase
       .from('form_submissions')
       .select('id')
       .eq('invitation_id', invitation.id)
       .single()
 
-    let pdfBytes: Uint8Array
-
-    // ── Load field coordinates from Supabase ───────────────────────────────
-    // Coordinates are the source of truth for PDF positions.
-    // We merge them with SELLER_DISCLOSURE_FIELDS for labels/section metadata.
+    // ── Load field coordinates from Supabase ─────────────────────────────────
+    // Coordinates are in PDF points (72 DPI), y measured from the TOP of the page.
+    // pdf-lib uses y from the BOTTOM, so we flip: y_bottom = PAGE_H_PT - y_top - height
     const { data: coords } = await supabase
       .from('field_coordinates')
       .select('*')
-      .eq('form_slug', 'seller-disclosure')
+      .eq('form_slug', formSlug)
 
-    // Build a coordinate lookup by field_key
-    const coordMap = new Map<string, Record<string, unknown>>()
-    if (coords) {
-      for (const c of coords) coordMap.set(c.field_key, c)
-    }
-
-    // Build the unified PdfField list:
-    // 1. Start with SELLER_DISCLOSURE_FIELDS (has labels, sections, type info)
-    // 2. Inject real coordinates from Supabase
-    // 3. Add any coordinate-only fields (no matching wizard definition)
-    const PX_TO_PT = 72 / 150
-    const PAGE_H_PT = 792
-
-    const coordToPagePt = (c: Record<string, unknown>, fieldH: number): { x: number; y: number; w: number; h: number } => {
-      const px = (c.x as number) ?? 0
-      const py = (c.y as number) ?? 0
-      const pw = (c.width as number) ?? 80
-      const ph = (c.height as number) ?? 14
-      const w = Math.max(pw * PX_TO_PT, 8)
-      const h = Math.max(ph * PX_TO_PT, fieldH)
-      const x = px * PX_TO_PT
-      const y = PAGE_H_PT - py * PX_TO_PT - h
-      return { x, y, w, h }
-    }
-
-    // Wizard fields with injected coordinates
-    const wizardFields: PdfField[] = SELLER_DISCLOSURE_FIELDS.map(f => {
-      const coord = coordMap.get(f.key)
-      if (!coord) return f
-      const { x, y, w, h } = coordToPagePt(coord, f.type === 'textarea' ? 40 : 12)
-      return { ...f, x, y, width: w, height: h, page: (coord.page_num as number) ?? f.page }
+    const allFields: PdfField[] = (coords ?? []).map(c => {
+      const h = (c.height as number) ?? 14
+      const w = (c.width  as number) ?? 80
+      const xPt = (c.x as number) ?? 0
+      const yPt = (c.y as number) ?? 0
+      // Flip y-axis: top-origin (pdf.js/DB) → bottom-origin (pdf-lib)
+      const yPdfLib = PAGE_H_PT - yPt - h
+      return {
+        key:    c.field_key,
+        label:  c.field_key,
+        page:   (c.page_num as number) ?? 1,
+        type:   (c.field_type as string) ?? 'text',
+        x:      xPt,
+        y:      yPdfLib,
+        width:  w,
+        height: h,
+        section: formSlug,
+      } as PdfField
     })
 
-    // Additional coordinate-only fields (drawn in mapper but not in wizard definition)
-    const wizardKeys = new Set(SELLER_DISCLOSURE_FIELDS.map(f => f.key))
-    const extraFields: PdfField[] = []
-    if (coords) {
-      for (const c of coords) {
-        if (wizardKeys.has(c.field_key)) continue  // already handled above
-        const { x, y, w, h } = coordToPagePt(c, 12)
-        const val = form_data[c.field_key]
-        if (val === undefined && c.field_type !== 'initial' && c.field_type !== 'signature') continue
-        extraFields.push({
-          key: c.field_key,
-          label: c.field_key,
-          page: c.page_num ?? 1,
-          type: c.field_type ?? 'text',
-          x, y,
-          width: w,
-          height: h,
-          section: 'extra',
-        } as PdfField)
-      }
-    }
+    // ── Load PDF template from Supabase Storage ──────────────────────────────
+    let pdfBytes: Uint8Array
 
-    const allFields = [...wizardFields, ...extraFields]
+    // Get the template path from form_templates table
+    const { data: formTemplate } = await supabase
+      .from('form_templates')
+      .select('pdf_template_path, name')
+      .eq('slug', formSlug)
+      .single()
 
-    // Try to load PDF template from storage
-    const { data: templateFile } = await supabase.storage
-      .from('form-templates')
-      .download('seller-disclosure/template.pdf')
+    const templatePath = formTemplate?.pdf_template_path
 
-    if (templateFile) {
+    const { data: templateFile, error: storageError } = templatePath
+      ? await supabase.storage.from('form-templates').download(templatePath)
+      : { data: null, error: 'no path' }
+
+    if (templateFile && !storageError) {
       const arrayBuffer = await templateFile.arrayBuffer()
       pdfBytes = await overlayFormData(new Uint8Array(arrayBuffer), form_data, allFields)
     } else {
-      // Fallback: generate a text summary PDF if no template has been baked yet
+      // Fallback: text summary PDF
       pdfBytes = await generateSummaryPdf(
         form_data,
         allFields,
@@ -116,8 +92,8 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
       )
     }
 
-    // Store PDF in Supabase Storage
-    const fileName = `seller-disclosure-${invitation.token}-${Date.now()}.pdf`
+    // ── Store PDF in Supabase Storage ────────────────────────────────────────
+    const fileName = `${formSlug}-${invitation.token}-${Date.now()}.pdf`
     const storagePath = `submissions/${fileName}`
 
     const { error: uploadError } = await supabase.storage
@@ -130,7 +106,7 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
       pdfUrl = urlData.publicUrl
     }
 
-    // Update or create submission
+    // ── Upsert form_submissions ──────────────────────────────────────────────
     const submissionData = {
       form_data,
       pdf_path: storagePath,
@@ -145,35 +121,32 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
       await supabase.from('form_submissions').insert({ invitation_id: invitation.id, ...submissionData })
     }
 
-    // Mark invitation as submitted
+    // ── Mark invitation as submitted ─────────────────────────────────────────
     await supabase.from('form_invitations').update({ status: 'submitted' }).eq('id', invitation.id)
 
-    // Send emails if configured
+    // ── Send emails ───────────────────────────────────────────────────────────
     if (process.env.GMAIL_APP_PASSWORD) {
       try {
         await sendFormCompletionEmails({
-          sellerEmail: invitation.seller_email,
-          sellerName: invitation.seller_name,
-          realtorEmail: invitation.realtor_email,
-          realtorName: invitation.realtor_name,
-          brokerEmail: invitation.broker_email,
-          brokerName: invitation.broker_name,
-          propertyAddress: invitation.property_address,
-          pdfBuffer: Buffer.from(pdfBytes),
+          sellerEmail:      invitation.seller_email,
+          sellerName:       invitation.seller_name,
+          realtorEmail:     invitation.realtor_email,
+          realtorName:      invitation.realtor_name,
+          brokerEmail:      invitation.broker_email,
+          brokerName:       invitation.broker_name,
+          propertyAddress:  invitation.property_address,
+          pdfBuffer:        Buffer.from(pdfBytes),
           fileName,
         })
       } catch (emailError) {
-        console.error('Email send error:', emailError)
+        console.error('[submit] Email send error:', emailError)
         // Don't fail the submission if email send fails
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      pdfUrl: pdfUrl || null,
-    })
+    return NextResponse.json({ success: true, pdfUrl: pdfUrl || null })
   } catch (error: unknown) {
-    console.error('Submit error:', error)
+    console.error('[submit] Error:', error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
   }
