@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 
 export const maxDuration = 30;
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const FORM_LABELS: Record<string, string> = {
   'seller-disclosure': 'Sellers Disclosure Addendum',
@@ -52,7 +49,7 @@ export async function POST(req: NextRequest) {
     const prefix = form_slug === 'seller-disclosure' ? 'sd' : 'pc';
     const imageUrl = `${base_url}/mapper-pages/${prefix}-page-${page_num}.jpg`;
 
-    // Fetch the page image
+    // Fetch the page image and convert to base64
     const imgRes = await fetch(imageUrl);
     if (!imgRes.ok) throw new Error(`Failed to fetch page image (${imgRes.status})`);
     const imgBuffer = await imgRes.arrayBuffer();
@@ -79,31 +76,45 @@ Rules:
 - Under 45 characters
 - Return ONLY the field key string, nothing else`;
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      max_tokens: 60,
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/jpeg;base64,${imgBase64}`,
-                detail: 'high',
+    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        max_tokens: 60,
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${imgBase64}`,
+                  detail: 'high',
+                },
               },
-            },
-            {
-              type: 'text',
-              text: prompt,
-            },
-          ],
-        },
-      ],
+              {
+                type: 'text',
+                text: prompt,
+              },
+            ],
+          },
+        ],
+      }),
     });
 
-    const raw = response.choices[0]?.message?.content?.trim() || 'field_name';
+    if (!openaiRes.ok) {
+      const err = await openaiRes.text();
+      throw new Error(`OpenAI error: ${err}`);
+    }
+
+    const data = await openaiRes.json();
+    const raw: string = data.choices?.[0]?.message?.content?.trim() || 'field_name';
+
     // Sanitize: lowercase, only a-z 0-9 underscores
     const suggestion = raw
       .toLowerCase()
