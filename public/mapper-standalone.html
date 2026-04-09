@@ -697,14 +697,18 @@ async function suggestFieldId() {
 
     // Find nearest section header above the drawn field
     // Section headers match: "126 9. ADDITIONS AND/OR REMODELING."
+    // NOTE: OCR y values are in PDF points; pendingRect.y is in 150 DPI pixels
+    // Scale factor: 150/72 ≈ 2.0833
+    const OCR_SCALE = 150 / 72;
     let sectionPrefix = '';
     {
       let bestSec = null;
       let bestSecDist = Infinity;
       for (const line of data) {
         const secMatch = line.text.trim().match(/^\d+\s+(\d+)\.\s+[A-Z]/);
-        if (secMatch && line.y < pendingRect.y) {
-          const dist = pendingRect.y - line.y;
+        const lineYpx = line.y * OCR_SCALE;
+        if (secMatch && lineYpx < pendingRect.y) {
+          const dist = pendingRect.y - lineYpx;
           if (dist < bestSecDist) {
             bestSecDist = dist;
             bestSec = secMatch[1];
@@ -732,13 +736,14 @@ async function suggestFieldId() {
       const wordCount = tClean.split(/\s+/).filter(w => w.length > 1).length;
       if (wordCount < 3) continue;
 
-      const lcx = line.x + line.width / 2;
-      const lcy = line.y + line.height / 2;
+      // Scale OCR coords (PDF points) to 150 DPI pixel space for comparison with pendingRect
+      const lcx = (line.x + line.width / 2) * OCR_SCALE;
+      const lcy = (line.y + line.height / 2) * OCR_SCALE;
       const dist = Math.sqrt((lcx - cx) ** 2 + (lcy - cy) ** 2);
 
       // Prefer lines ABOVE the drawn field (labels appear above inputs)
       const isAbove = lcy < pendingRect.y;
-      const vertClose = lcy >= (pendingRect.y - 80) && lcy <= (pendingRect.y + pendingRect.h + 20);
+      const vertClose = lcy >= (pendingRect.y - 160) && lcy <= (pendingRect.y + pendingRect.h + 40);
       const score = dist * (isAbove && vertClose ? 0.4 : vertClose ? 0.6 : 1.0);
 
       if (score < bestScore) {
