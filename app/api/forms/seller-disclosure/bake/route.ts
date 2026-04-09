@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { PDFDocument, PDFName } from 'pdf-lib'
 import { createServiceClient } from '@/lib/supabase'
 
@@ -7,9 +7,10 @@ export const maxDuration = 60
 /**
  * POST /api/forms/seller-disclosure/bake
  *
- * Reads the original blank PDF from storage, adds real AcroForm text/checkbox
- * widgets at the positions stored in field_coordinates, then saves the result
- * as the fillable template (seller-disclosure/template.pdf).
+ * Reads the original blank PDF (from storage or public library fallback),
+ * adds real AcroForm text/checkbox widgets at the positions stored in
+ * field_coordinates, then saves the result as the fillable template
+ * (seller-disclosure/template.pdf in form-templates bucket).
  *
  * Fully dynamic — no hardcoded field definitions required.
  * Any field drawn in the mapper and saved to Supabase will be baked automatically.
@@ -23,23 +24,53 @@ export const maxDuration = 60
 const PX_TO_PT = 72 / 150  // 0.48
 const PAGE_H_PT = 792       // standard letter page height in points
 
-export async function POST() {
+// Public URL of the original blank PDF (served from /public/library/)
+const PUBLIC_ORIGINAL_URL = 'https://tc-redeal-forms.vercel.app/library/seller-disclosure-blank.pdf'
+
+export async function POST(req: NextRequest) {
   try {
     const supabase = createServiceClient()
 
     // ── 1. Load original PDF ───────────────────────────────────────────────
-    const { data: originalFile, error: dlError } = await supabase.storage
+    // Try storage first; fall back to public library file
+    let originalBytes: Uint8Array | null = null
+
+    const { data: storedFile } = await supabase.storage
       .from('form-templates')
       .download('seller-disclosure/original.pdf')
 
-    if (dlError || !originalFile) {
-      return NextResponse.json(
-        { error: 'Original PDF not found. Upload it first via the mapper.' },
-        { status: 404 }
-      )
+    if (storedFile) {
+      originalBytes = new Uint8Array(await storedFile.arrayBuffer())
+    } else {
+      // Fall back to public library PDF
+      const host = req.headers.get('host') ?? 'tc-redeal-forms.vercel.app'
+      const protocol = host.includes('localhost') ? 'http' : 'https'
+      const publicUrl = `${protocol}://${host}/library/seller-disclosure-blank.pdf`
+
+      const res = await fetch(publicUrl)
+      if (!res.ok) {
+        // Last resort: try the hardcoded production URL
+        const prodRes = await fetch(PUBLIC_ORIGINAL_URL)
+        if (!prodRes.ok) {
+          return NextResponse.json(
+            { error: 'Original PDF not found. Please upload seller-disclosure-blank.pdf to /public/library/ and redeploy.' },
+            { status: 404 }
+          )
+        }
+        originalBytes = new Uint8Array(await prodRes.arrayBuffer())
+      } else {
+        originalBytes = new Uint8Array(await res.arrayBuffer())
+      }
+
+      // Cache it in storage so we don't fetch the public URL every time
+      await supabase.storage
+        .from('form-templates')
+        .upload('seller-disclosure/original.pdf', originalBytes, {
+          contentType: 'application/pdf',
+          upsert: true,
+        })
     }
 
-    const originalBytes = new Uint8Array(await originalFile.arrayBuffer())
     const pdfDoc = await PDFDocument.load(originalBytes)
 
     // ── 2. Load ALL field coordinates from Supabase ────────────────────────
