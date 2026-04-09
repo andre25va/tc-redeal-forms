@@ -108,23 +108,22 @@ export async function overlayFormData(
 
     const w   = field.width  ?? 8
     const h   = field.height ?? 8
-    const pad = 1.5
-    const x0  = field.x + pad
-    const y0  = field.y + pad
-    const x1  = field.x + w - pad
-    const y1  = field.y + h - pad
+    // Center-based X: compute box center and arm length from the shorter dimension
+    const cx  = field.x + w / 2
+    const cy  = field.y + h / 2
+    const arm = Math.min(w, h) / 2 - 1.2
 
-    // ╲ diagonal
+    // ╬ diagonal (bottom-left → top-right in PDF coords)
     page.drawLine({
-      start:     { x: x0, y: y0 },
-      end:       { x: x1, y: y1 },
+      start:     { x: cx - arm, y: cy - arm },
+      end:       { x: cx + arm, y: cy + arm },
       thickness: 1.2,
       color:     rgb(0, 0, 0),
     })
-    // ╱ diagonal
+    // ╬ diagonal (bottom-right → top-left in PDF coords)
     page.drawLine({
-      start:     { x: x1, y: y0 },
-      end:       { x: x0, y: y1 },
+      start:     { x: cx + arm, y: cy - arm },
+      end:       { x: cx - arm, y: cy + arm },
       thickness: 1.2,
       color:     rgb(0, 0, 0),
     })
