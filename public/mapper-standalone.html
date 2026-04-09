@@ -737,14 +737,14 @@ async function suggestFieldId() {
       if (wordCount < 3) continue;
 
       // Scale OCR coords (PDF points) to 150 DPI pixel space for comparison with pendingRect
-      const lcx = (line.x + line.width / 2) * OCR_SCALE;
+      // Use vertical distance only — full-width lines have misleading center-X values
       const lcy = (line.y + line.height / 2) * OCR_SCALE;
-      const dist = Math.sqrt((lcx - cx) ** 2 + (lcy - cy) ** 2);
+      const vertDist = Math.abs(lcy - cy);
 
       // Prefer lines ABOVE the drawn field (labels appear above inputs)
       const isAbove = lcy < pendingRect.y;
-      const vertClose = lcy >= (pendingRect.y - 160) && lcy <= (pendingRect.y + pendingRect.h + 40);
-      const score = dist * (isAbove && vertClose ? 0.4 : vertClose ? 0.6 : 1.0);
+      const vertClose = lcy >= (pendingRect.y - 200) && lcy <= (pendingRect.y + pendingRect.h + 60);
+      const score = vertDist * (isAbove && vertClose ? 0.4 : isAbove ? 0.7 : 1.2);
 
       if (score < bestScore) {
         bestScore = score;
