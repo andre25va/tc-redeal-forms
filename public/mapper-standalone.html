@@ -708,14 +708,19 @@ async function suggestFieldId() {
       if (/^[\d\s_\-\.…]+$/.test(t)) continue;
       // Skip very short tokens
       if (t.length < 4) continue;
+      // Skip lines with fewer than 3 meaningful words (e.g. "documentation:" or "If Yes:")
+      const tClean = t.replace(/^\d+\s*/, '').replace(/[_\-\.:\?!"]+/g, ' ').trim();
+      const wordCount = tClean.split(/\s+/).filter(w => w.length > 1).length;
+      if (wordCount < 3) continue;
 
       const lcx = line.x + line.width / 2;
       const lcy = line.y + line.height / 2;
       const dist = Math.sqrt((lcx - cx) ** 2 + (lcy - cy) ** 2);
 
-      // Bonus: line vertically overlaps or is just above the box (within 60px)
-      const vertClose = lcy >= (pendingRect.y - 60) && lcy <= (pendingRect.y + pendingRect.h + 30);
-      const score = dist * (vertClose ? 0.6 : 1.0);
+      // Prefer lines ABOVE the drawn field (labels appear above inputs)
+      const isAbove = lcy < pendingRect.y;
+      const vertClose = lcy >= (pendingRect.y - 80) && lcy <= (pendingRect.y + pendingRect.h + 20);
+      const score = dist * (isAbove && vertClose ? 0.4 : vertClose ? 0.6 : 1.0);
 
       if (score < bestScore) {
         bestScore = score;
