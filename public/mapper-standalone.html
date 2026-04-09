@@ -219,9 +219,9 @@
     <label>Field Key</label>
     <div class="suggest-row">
       <input type="text" id="modalKey" placeholder="e.g. seller_name" autocomplete="off">
-      <button class="btn-suggest" id="btnSuggest" onclick="suggestFieldId()" title="Ask AI to suggest a field key based on the PDF content">✨ Suggest</button>
+      <button class="btn-suggest" id="btnSuggest" onclick="suggestFieldId()" title="Look up nearby OCR text to suggest a field key">🔍 Suggest</button>
     </div>
-    <p class="suggest-hint" id="suggestHint">AI reads the PDF text near this field and suggests a key</p>
+    <p class="suggest-hint" id="suggestHint">OCR memory bank — finds nearby text and suggests a field key</p>
     <label>Type</label>
     <select id="modalType">
       <option value="text">Text</option>
@@ -633,10 +633,10 @@ function openAddModal() {
   document.getElementById('modalInit').checked = false;
   document.getElementById('modalReq').checked = false;
   const hint = document.getElementById('suggestHint');
-  hint.textContent = 'AI reads the PDF text near this field and suggests a key';
+  hint.textContent = 'OCR memory bank — finds nearby text and suggests a field key';
   hint.style.color = '#a0aec0';
   const btn = document.getElementById('btnSuggest');
-  btn.textContent = '✨ Suggest';
+  btn.textContent = '🔍 Suggest';
   btn.disabled = false;
   document.getElementById('addModal').classList.remove('hidden');
   document.getElementById('modalKey').focus();
@@ -671,46 +671,83 @@ function confirmAdd() {
   updatePropsPanel();
 }
 
-// ── AI Field ID Suggestion ────────────────────────────────
+// ── OCR Memory Bank Field ID Suggestion ──────────────────
 async function suggestFieldId() {
   if (!pendingRect || !currentForm) return;
   const btn = document.getElementById('btnSuggest');
   const hint = document.getElementById('suggestHint');
   btn.disabled = true;
-  btn.textContent = '⏳ Thinking…';
-  hint.textContent = 'Reading the PDF…';
+  btn.textContent = '⏳ Looking up…';
+  hint.textContent = 'Searching OCR memory bank…';
   hint.style.color = '#718096';
 
   try {
-    const res = await fetch('/api/mapper/suggest-field-id', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        form_slug: FORM_PAGES[currentForm].slug,
-        page_num: currentPage,
-        x: pendingRect.x,
-        y: pendingRect.y,
-        w: pendingRect.w,
-        h: pendingRect.h,
-        field_type: document.getElementById('modalType').value,
-        base_url: window.location.origin
-      })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    document.getElementById('modalKey').value = data.suggestion;
-    hint.textContent = '✓ Suggestion filled in — edit if needed';
+    const cx = pendingRect.x + pendingRect.w / 2;
+    const cy = pendingRect.y + pendingRect.h / 2;
+
+    // Query all OCR lines for this form + page
+    const { data, error } = await sbClient
+      .from('pdf_ocr_lines')
+      .select('text, x, y, width, height')
+      .eq('form_slug', FORM_PAGES[currentForm].slug)
+      .eq('page_num', currentPage);
+
+    if (error) throw error;
+    if (!data || data.length === 0) throw new Error('No OCR data for this page');
+
+    // Find closest line by weighted distance
+    // Prefer lines immediately above or to the left of the drawn box
+    let best = null;
+    let bestScore = Infinity;
+
+    for (const line of data) {
+      const lcx = line.x + line.width / 2;
+      const lcy = line.y + line.height / 2;
+      const dist = Math.sqrt((lcx - cx) ** 2 + (lcy - cy) ** 2);
+
+      // Bonus: line vertically overlaps or is just above the box (within 60px)
+      const vertClose = lcy >= (pendingRect.y - 60) && lcy <= (pendingRect.y + pendingRect.h + 30);
+      const score = dist * (vertClose ? 0.6 : 1.0);
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = line;
+      }
+    }
+
+    if (!best) throw new Error('No nearby text found');
+
+    const suggestion = textToFieldKey(best.text, document.getElementById('modalType').value);
+    document.getElementById('modalKey').value = suggestion;
+    hint.textContent = '✓ From: "' + best.text.slice(0, 55) + (best.text.length > 55 ? '…' : '') + '"';
     hint.style.color = '#166534';
-    btn.textContent = '✨ Re-suggest';
+    btn.textContent = '🔍 Re-suggest';
   } catch(e) {
-    hint.textContent = '⚠ ' + (e.message || 'Suggestion failed');
+    hint.textContent = '⚠ ' + (e.message || 'Lookup failed');
     hint.style.color = '#c53030';
-    btn.textContent = '✨ Suggest';
+    btn.textContent = '🔍 Suggest';
   } finally {
     btn.disabled = false;
   }
 }
 
+function textToFieldKey(text, fieldType) {
+  const stopWords = new Set(['the','a','an','of','and','or','in','to','is','are','was','were',
+    'be','been','being','has','have','had','do','does','did','will','would','shall','should',
+    'may','might','can','could','this','that','with','from','by','for','at','as','on','if','not']);
+  let key = text
+    .toLowerCase()
+    .replace(/[()[\]{}:?.,!';"]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !stopWords.has(w))
+    .slice(0, 6)
+    .join('_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 40);
+  return key || ('field_' + fieldType);
+}
 // ── Properties Panel ──────────────────────────────────────
 function updatePropsPanel() {
   const panel = document.getElementById('propsPanel');
