@@ -642,10 +642,9 @@ function onKeyDown(e) {
 // ── Modal ─────────────────────────────────────────────────
 function openAddModal() {
   // Pre-select the active draw type in the modal
+  document.getElementById('modalKey').value = '';
   const modalType = document.getElementById('modalType');
   if (modalType) modalType.value = drawType;
-  document.getElementById('modalKey').value = '';
-  document.getElementById('modalType').value = 'text';
   document.getElementById('modalSig').checked = false;
   document.getElementById('modalInit').checked = false;
   document.getElementById('modalReq').checked = false;
