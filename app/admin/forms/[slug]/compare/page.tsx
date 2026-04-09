@@ -178,44 +178,47 @@ export default function ComparePage() {
                 </span>
               ))}
             </div>
-            <div className="flex-1 overflow-auto bg-gray-200 p-4 flex justify-center">
-              {!pdf ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
-                </div>
-              ) : (
-                <div className="relative inline-block shadow-lg bg-white self-start">
-                  <canvas ref={canvasLeftRef} className="block" />
-                  <svg
-                    className="absolute top-0 left-0 pointer-events-none"
-                    width={vpW * scale} height={vpH * scale}
-                  >
-                    {pageFields.map(f => {
-                      const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
-                      const sx = f.x * scale, sy = f.y * scale
-                      const sw = f.width * scale, sh = f.height * scale
-                      return (
-                        <g key={f.field_key}>
-                          <rect
-                            x={sx} y={sy} width={Math.max(1, sw)} height={Math.max(1, sh)}
-                            fill={`${color}20`}
-                            stroke={color}
-                            strokeWidth={1.5}
-                            rx={1}
-                          />
-                          {scale >= 0.8 && (
-                            <text x={sx + 2} y={sy - 2} fill={color}
-                              fontSize={Math.max(7, 9 * scale)} fontFamily="monospace"
-                              style={{ userSelect: 'none' }}>
-                              {f.field_key.length > 24 ? f.field_key.slice(0, 24) + '…' : f.field_key}
-                            </text>
-                          )}
-                        </g>
-                      )
-                    })}
-                  </svg>
-                </div>
-              )}
+            {/* overflow-auto + min-w-max wrapper = full horizontal scroll when zoomed */}
+            <div className="flex-1 overflow-auto bg-gray-200 p-4">
+              <div className="min-w-max flex justify-center">
+                {!pdf ? (
+                  <div className="flex items-center justify-center" style={{ width: 300, height: 400 }}>
+                    <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
+                  </div>
+                ) : (
+                  <div className="relative inline-block shadow-lg bg-white">
+                    <canvas ref={canvasLeftRef} className="block" />
+                    <svg
+                      className="absolute top-0 left-0 pointer-events-none"
+                      width={vpW * scale} height={vpH * scale}
+                    >
+                      {pageFields.map(f => {
+                        const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
+                        const sx = f.x * scale, sy = f.y * scale
+                        const sw = f.width * scale, sh = f.height * scale
+                        return (
+                          <g key={f.field_key}>
+                            <rect
+                              x={sx} y={sy} width={Math.max(1, sw)} height={Math.max(1, sh)}
+                              fill={`${color}20`}
+                              stroke={color}
+                              strokeWidth={1.5}
+                              rx={1}
+                            />
+                            {scale >= 0.8 && (
+                              <text x={sx + 2} y={sy - 2} fill={color}
+                                fontSize={Math.max(7, 9 * scale)} fontFamily="monospace"
+                                style={{ userSelect: 'none' }}>
+                                {f.field_key.length > 24 ? f.field_key.slice(0, 24) + '\u2026' : f.field_key}
+                              </text>
+                            )}
+                          </g>
+                        )
+                      })}
+                    </svg>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -226,117 +229,111 @@ export default function ComparePage() {
               <div className="flex-1" />
               <span className="text-[10px] text-gray-400">{filledCount} of {pageFields.length} filled on this page</span>
             </div>
-            <div className="flex-1 overflow-auto bg-gray-200 p-4 flex justify-center">
-              {!pdf ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
-                </div>
-              ) : (
-                <div className="relative inline-block shadow-lg bg-white self-start">
-                  <canvas ref={canvasRightRef} className="block" />
-                  <div
-                    className="absolute top-0 left-0 pointer-events-none"
-                    style={{ width: vpW * scale, height: vpH * scale }}
-                  >
-                    {pageFields.map(f => {
-                      const isCheckbox = f.field_type === 'checkbox' || (f.field_type === 'text' && f.width < 16)
-                      const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
-                      const value = testData[f.field_key] || ''
+            {/* overflow-auto + min-w-max wrapper = full horizontal scroll when zoomed */}
+            <div className="flex-1 overflow-auto bg-gray-200 p-4">
+              <div className="min-w-max flex justify-center">
+                {!pdf ? (
+                  <div className="flex items-center justify-center" style={{ width: 300, height: 400 }}>
+                    <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
+                  </div>
+                ) : (
+                  <div className="relative inline-block shadow-lg bg-white">
+                    <canvas ref={canvasRightRef} className="block" />
+                    <div
+                      className="absolute top-0 left-0 pointer-events-none"
+                      style={{ width: vpW * scale, height: vpH * scale }}
+                    >
+                      {pageFields.map(f => {
+                        const isCheckbox = f.field_type === 'checkbox' || (f.field_type === 'text' && f.width < 16)
+                        const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
+                        const value = testData[f.field_key] || ''
 
-                      // Use exact PDF-point coordinates scaled to screen
-                      const left = f.x * scale
-                      const top = f.y * scale
-                      const width = f.width * scale
-                      const height = f.height * scale
+                        const left = f.x * scale
+                        const top = f.y * scale
+                        const width = f.width * scale
+                        const height = f.height * scale
 
-                      if (isCheckbox) {
-                        const checked = value === 'true'
-                        const boxSize = Math.min(width * 0.85, height * 0.85, 12)
-                        return (
-                          <div
-                            key={f.field_key}
-                            className="absolute flex items-center justify-center"
-                            style={{ left, top, width, height }}
-                            title={f.field_key}
-                          >
-                            <div style={{
-                              width: boxSize, height: boxSize,
-                              border: `1px solid ${color}40`,
-                              borderRadius: 1,
-                              position: 'relative',
-                              backgroundColor: checked ? '#f0fdf4' : 'transparent',
-                            }}>
-                              {checked && (
-                                <svg viewBox="0 0 10 10" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-                                  <polyline points="2,5.5 4.2,7.8 8,2.5" fill="none" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              )}
+                        if (isCheckbox) {
+                          const checked = value === 'true'
+                          const boxSize = Math.min(width * 0.85, height * 0.85, 12)
+                          return (
+                            <div
+                              key={f.field_key}
+                              className="absolute flex items-center justify-center"
+                              style={{ left, top, width, height }}
+                              title={f.field_key}
+                            >
+                              <div style={{
+                                width: boxSize, height: boxSize,
+                                border: `1px solid ${color}40`,
+                                borderRadius: 1,
+                                position: 'relative',
+                                backgroundColor: checked ? '#f0fdf4' : 'transparent',
+                              }}>
+                                {checked && (
+                                  <svg viewBox="0 0 10 10" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                    <polyline points="2,5.5 4.2,7.8 8,2.5" fill="none" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        )
-                      }
+                          )
+                        }
 
-                      const isSig = f.is_signature || f.field_type === 'signature'
-                      const isInit = f.is_initial || f.field_type === 'initial'
-                      // Fixed 9pt font — readable at all zoom levels, fits within tight rows
-                      const fontSize = Math.max(7, Math.min(10, 9 * scale))
+                        const isSig = f.is_signature || f.field_type === 'signature'
+                        const isInit = f.is_initial || f.field_type === 'initial'
+                        const fontSize = Math.max(7, Math.min(10, 9 * scale))
 
-                      if (!value) {
+                        if (!value) {
+                          return (
+                            <div
+                              key={f.field_key}
+                              className="absolute"
+                              style={{
+                                left, top, width, height,
+                                borderBottom: `1px dashed ${color}25`,
+                              }}
+                              title={f.field_key}
+                            />
+                          )
+                        }
+
                         return (
                           <div
                             key={f.field_key}
                             className="absolute"
                             style={{
                               left, top, width, height,
-                              borderBottom: `1px dashed ${color}25`,
+                              overflow: 'visible',
+                              paddingLeft: 2,
+                              paddingRight: 2,
+                              backgroundColor: isSig || isInit
+                                ? 'rgba(139,92,246,0.07)'
+                                : 'rgba(59,130,246,0.07)',
+                              borderBottom: `1px solid ${color}35`,
+                              zIndex: 1,
                             }}
-                            title={f.field_key}
-                          />
+                            title={`${f.field_key}: ${value}`}
+                          >
+                            <span style={{
+                              fontSize,
+                              fontFamily: isSig || isInit ? 'cursive, Georgia, serif' : 'Arial, sans-serif',
+                              fontStyle: isSig || isInit ? 'italic' : 'normal',
+                              color: isSig || isInit ? '#1e40af' : '#111827',
+                              lineHeight: 1,
+                              whiteSpace: 'nowrap',
+                              display: 'block',
+                              marginTop: Math.max(0, (height - fontSize) / 2),
+                            }}>
+                              {value}
+                            </span>
+                          </div>
                         )
-                      }
-
-                      return (
-                        <div
-                          key={f.field_key}
-                          className="absolute"
-                          style={{
-                            left,
-                            top,
-                            width,
-                            // Allow text to overflow downward — exact coords, no expansion
-                            height,
-                            overflow: 'visible',
-                            paddingLeft: 2,
-                            paddingRight: 2,
-                            // Subtle field highlight
-                            backgroundColor: isSig || isInit
-                              ? 'rgba(139,92,246,0.07)'
-                              : 'rgba(59,130,246,0.07)',
-                            borderBottom: `1px solid ${color}35`,
-                            // Stack filled fields on top
-                            zIndex: 1,
-                          }}
-                          title={`${f.field_key}: ${value}`}
-                        >
-                          <span style={{
-                            fontSize,
-                            fontFamily: isSig || isInit ? 'cursive, Georgia, serif' : 'Arial, sans-serif',
-                            fontStyle: isSig || isInit ? 'italic' : 'normal',
-                            color: isSig || isInit ? '#1e40af' : '#111827',
-                            lineHeight: 1,
-                            whiteSpace: 'nowrap',
-                            display: 'block',
-                            // Position text at vertical center of field
-                            marginTop: Math.max(0, (height - fontSize) / 2),
-                          }}>
-                            {value}
-                          </span>
-                        </div>
-                      )
-                    })}
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -346,7 +343,7 @@ export default function ComparePage() {
           <span>Left: coordinate boxes from mapper</span>
           <span>·</span>
           <span>Right: test data values at those coordinates</span>
-          <span className="ml-auto">Scroll both panels independently · Zoom and page sync automatically</span>
+          <span className="ml-auto">Scroll both panels independently · Zoom and page sync</span>
         </div>
       </div>
     </>
