@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -314,7 +314,7 @@ export default function MapperPage() {
         return [...prev, field]
       })
       setPendingChanges(pm => { const n = new Map(pm); n.delete(field.field_key); return n })
-      setSaveStatus('Saved ✓'); setTimeout(() => setSaveStatus(''), 2000)
+      setSaveStatus('Saved \u2713'); setTimeout(() => setSaveStatus(''), 2000)
     }
     setSaving(false); setShowModal(false); setEditingField(null)
   }
@@ -331,7 +331,7 @@ export default function MapperPage() {
     const { error } = await supabase.from('field_coordinates').upsert(upserts, { onConflict: 'form_slug,field_key,page_num' })
     if (error) { setSaveStatus('Error: ' + error.message) } else {
       setPendingChanges(new Map())
-      setSaveStatus(`Saved ${upserts.length} fields ✓`); setTimeout(() => setSaveStatus(''), 3000)
+      setSaveStatus(`Saved ${upserts.length} fields \u2713`); setTimeout(() => setSaveStatus(''), 3000)
     }
     setSaving(false)
   }
@@ -414,6 +414,13 @@ export default function MapperPage() {
 
           <div className="w-px h-6 bg-gray-200 mx-1" />
           <button
+            onClick={() => window.open(`/admin/forms/${slug}/compare`, '_blank')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white text-xs font-bold rounded-lg hover:bg-amber-600 transition-colors"
+          >
+            <Columns className="w-3.5 h-3.5" />
+            Compare
+          </button>
+          <button
             onClick={() => window.open(`/admin/forms/${slug}/preview?page=${pageNum}`, '_blank')}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors"
           >
@@ -449,7 +456,7 @@ export default function MapperPage() {
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400">
                   <div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto mb-3" />
-                  <p className="text-sm">Loading PDF…</p>
+                  <p className="text-sm">Loading PDF\u2026</p>
                 </div>
               </div>
             ) : (
@@ -486,7 +493,7 @@ export default function MapperPage() {
                           <text x={sx + 2} y={sy - 2} fill={changed ? '#f97316' : color}
                             fontSize={9} fontFamily="monospace"
                             style={{ pointerEvents: 'none', userSelect: 'none' }}>
-                            {f.field_key.length > 28 ? f.field_key.slice(0, 28) + '…' : f.field_key}
+                            {f.field_key.length > 28 ? f.field_key.slice(0, 28) + '\u2026' : f.field_key}
                           </text>
                         )}
                         {sel && [
@@ -518,14 +525,14 @@ export default function MapperPage() {
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-gray-400" />
                 <input type="text" value={searchQ} onChange={e => setSearchQ(e.target.value)}
-                  placeholder="Search fields…"
+                  placeholder="Search fields\u2026"
                   className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-gray-400">
                   {sidebarFields.length} fields{filterType ? ` (${filterType})` : ''}
                   {pendingChanges.size > 0 && (
-                    <span className="ml-1 text-orange-500 font-medium">· {pendingChanges.size} unsaved</span>
+                    <span className="ml-1 text-orange-500 font-medium">\u00b7 {pendingChanges.size} unsaved</span>
                   )}
                 </span>
                 {filterType && (
@@ -546,7 +553,7 @@ export default function MapperPage() {
                     style={{ backgroundColor: TYPE_COLORS[f.field_type || 'text'] }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-mono text-gray-700 truncate">{f.field_key}</p>
-                    <p className="text-[10px] text-gray-400">p{f.page_num} · {f.field_type || 'text'}</p>
+                    <p className="text-[10px] text-gray-400">p{f.page_num} \u00b7 {f.field_type || 'text'}</p>
                   </div>
                   <div className="opacity-0 group-hover:opacity-100 flex gap-1">
                     <button onClick={e => { e.stopPropagation(); setEditingField({ ...f }); setShowModal(true) }}
@@ -636,7 +643,7 @@ function FieldModal({ field, saving, onSave, onCancel, onDelete }: {
             className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg font-medium">Cancel</button>
           <button onClick={() => onSave(f)} disabled={saving || !f.field_key}
             className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving\u2026' : 'Save'}
           </button>
         </div>
       </div>
