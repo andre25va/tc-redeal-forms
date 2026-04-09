@@ -35,7 +35,7 @@ export async function POST(req: Request) {
       height,
       font_size,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'form_slug,field_key' })
+    }, { onConflict: 'form_slug,field_key,page_num' })
     .select()
     .single()
 
