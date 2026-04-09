@@ -309,7 +309,7 @@ export default function MapperPage() {
       form_slug: field.form_slug, field_key: field.field_key, page_num: field.page_num,
       x: field.x, y: field.y, width: field.width, height: field.height,
       field_type: field.field_type, is_signature: field.is_signature, is_initial: field.is_initial, required: field.required,
-    }, { onConflict: 'form_slug,field_key' })
+    }, { onConflict: 'form_slug,field_key,page_num' })
     if (error) { setSaveStatus('Error: ' + error.message) } else {
       setAllFields(prev => {
         const idx = prev.findIndex(f => f.field_key === field.field_key && f.form_slug === field.form_slug)
@@ -331,7 +331,7 @@ export default function MapperPage() {
       width: Math.round(f.width * 100) / 100, height: Math.round(f.height * 100) / 100,
       field_type: f.field_type, is_signature: f.is_signature, is_initial: f.is_initial, required: f.required,
     }))
-    const { error } = await supabase.from('field_coordinates').upsert(upserts, { onConflict: 'form_slug,field_key' })
+    const { error } = await supabase.from('field_coordinates').upsert(upserts, { onConflict: 'form_slug,field_key,page_num' })
     if (error) { setSaveStatus('Error: ' + error.message) } else {
       setPendingChanges(new Map())
       setSaveStatus(`Saved ${upserts.length} fields ✓`); setTimeout(() => setSaveStatus(''), 3000)
@@ -532,7 +532,7 @@ export default function MapperPage() {
             </div>
             <div className="flex-1 overflow-y-auto">
               {sidebarFields.map(f => (
-                <div key={`${f.form_slug}-${f.field_key}`}
+                <div key={`${f.form_slug}-${f.field_key}-${f.page_num}`}
                   className={[
                     'px-3 py-2 border-b border-gray-50 cursor-pointer flex items-center gap-2 group transition-colors',
                     f.field_key === selectedKey ? 'bg-indigo-50' : 'hover:bg-gray-50',
