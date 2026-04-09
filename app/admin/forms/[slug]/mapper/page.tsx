@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -180,7 +180,6 @@ export default function MapperPage() {
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
-  // SVG mouse down (background = start drawing)
   const handleSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (e.button !== 0) return
     setSelectedKey(null)
@@ -188,7 +187,6 @@ export default function MapperPage() {
     ia.current = { mode: 'drawing', sx: x, sy: y, cx: x, cy: y, dragged: false }
   }
 
-  // Field rect mouse down (start dragging)
   const handleFieldMouseDown = (e: React.MouseEvent, f: Field) => {
     e.stopPropagation(); e.preventDefault()
     setSelectedKey(f.field_key)
@@ -200,7 +198,6 @@ export default function MapperPage() {
     }
   }
 
-  // Resize handle mouse down
   const handleResizeMouseDown = (e: React.MouseEvent, f: Field, corner: string) => {
     e.stopPropagation(); e.preventDefault()
     const { x, y } = getSvgXY(e)
@@ -346,7 +343,6 @@ export default function MapperPage() {
     setSelectedKey(null)
   }
 
-  // Derived
   const cur = ia.current
   const drawGhost = (cur.mode === 'drawing' && cur.dragged) ? {
     x: Math.min(cur.sx, cur.cx), y: Math.min(cur.sy, cur.cy),
@@ -415,10 +411,19 @@ export default function MapperPage() {
             </>
           )}
           {saveStatus && <span className="text-xs text-green-600 font-medium ml-1">{saveStatus}</span>}
+
+          <div className="w-px h-6 bg-gray-200 mx-1" />
+          <button
+            onClick={() => window.open(`/admin/forms/${slug}/preview?page=${pageNum}`, '_blank')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-colors"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Preview
+          </button>
         </header>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Left toolbar: draw type buttons + layer filters */}
+          {/* Left toolbar */}
           <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-2 flex-shrink-0">
             {DRAW_TYPES.map(dt => {
               const Icon = dt.icon
@@ -484,7 +489,6 @@ export default function MapperPage() {
                             {f.field_key.length > 28 ? f.field_key.slice(0, 28) + '…' : f.field_key}
                           </text>
                         )}
-                        {/* Resize handles on selected field */}
                         {sel && [
                           { cx: sx, cy: sy, corner: 'nw', cursor: 'nwse-resize' },
                           { cx: sx + sw, cy: sy, corner: 'ne', cursor: 'nesw-resize' },
@@ -499,7 +503,6 @@ export default function MapperPage() {
                       </g>
                     )
                   })}
-                  {/* Drawing ghost */}
                   {drawGhost && (
                     <rect x={drawGhost.x} y={drawGhost.y} width={drawGhost.w} height={drawGhost.h}
                       fill="rgba(99,102,241,0.15)" stroke="#6366f1" strokeWidth={2} strokeDasharray="4 2" rx={2} />
