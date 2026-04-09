@@ -685,33 +685,33 @@ async function suggestFieldId() {
     const cx = pendingRect.x + pendingRect.w / 2;
     const cy = pendingRect.y + pendingRect.h / 2;
 
-    // Query all OCR lines for this form + page
+    // Query all OCR lines for this form + page (include section_num)
     const { data, error } = await sbClient
       .from('pdf_ocr_lines')
-      .select('text, x, y, width, height')
+      .select('text, x, y, width, height, section_num')
       .eq('form_slug', FORM_PAGES[currentForm].slug)
       .eq('page_num', currentPage);
 
     if (error) throw error;
     if (!data || data.length === 0) throw new Error('No OCR data for this page');
 
-    // Find nearest section header above the drawn field
-    // Section headers match: "126 9. ADDITIONS AND/OR REMODELING."
+    // Determine section prefix from section_num column (no regex needed)
     // NOTE: OCR y values are in PDF points; pendingRect.y is in 150 DPI pixels
     // Scale factor: 150/72 ≈ 2.0833
     const OCR_SCALE = 150 / 72;
     let sectionPrefix = '';
     {
+      // Find the section_num of the line closest above the drawn field
       let bestSec = null;
       let bestSecDist = Infinity;
       for (const line of data) {
-        const secMatch = line.text.trim().match(/^\d+\s+(\d+)\.\s+[A-Z]/);
+        if (!line.section_num) continue;
         const lineYpx = line.y * OCR_SCALE;
-        if (secMatch && lineYpx < pendingRect.y) {
+        if (lineYpx < pendingRect.y) {
           const dist = pendingRect.y - lineYpx;
           if (dist < bestSecDist) {
             bestSecDist = dist;
-            bestSec = secMatch[1];
+            bestSec = line.section_num;
           }
         }
       }
