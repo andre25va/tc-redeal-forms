@@ -208,7 +208,7 @@ export default function PreviewPage() {
                   const borderColor = TYPE_BORDER[f.field_type || 'text'] || '#3b82f6'
                   const value = testData[f.field_key] || ''
 
-                  // ── Checkbox: render clickable box with X mark when checked ──
+                  // ── Checkbox: clickable box with checkmark (✓) when checked ──
                   if (isCheckbox) {
                     const checked = value === 'true'
                     const boxSize = Math.min(width * 0.85, height * 0.85)
@@ -235,8 +235,14 @@ export default function PreviewPage() {
                               viewBox="0 0 10 10"
                               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
                             >
-                              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="#111" strokeWidth="1.8" strokeLinecap="round" />
-                              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="#111" strokeWidth="1.8" strokeLinecap="round" />
+                              <polyline
+                                points="1.5,5.5 4,8 8.5,2"
+                                stroke="#111"
+                                strokeWidth="1.8"
+                                fill="none"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
                             </svg>
                           )}
                         </div>

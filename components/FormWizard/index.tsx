@@ -172,12 +172,18 @@ function LanguageToggle({
   )
 }
 
-// ── X Mark SVG (matches PDF baked output) ────────────────────────────────────
-function XMark() {
+// ── Checkmark SVG (matches PDF baked output) ──────────────────────────────────
+function Checkmark() {
   return (
     <svg viewBox="0 0 10 10" className="absolute inset-0 w-full h-full" style={{ padding: '1px' }}>
-      <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="#111" strokeWidth="2" strokeLinecap="round" />
-      <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="#111" strokeWidth="2" strokeLinecap="round" />
+      <polyline
+        points="1.5,5.5 4,8 8.5,2"
+        stroke="#111"
+        strokeWidth="2"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -334,7 +340,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                 : 'bg-white border-gray-300 hover:border-gray-500'
             }`}
           >
-            {checked && <XMark />}
+            {checked && <Checkmark />}
           </button>
           <label
             onClick={() => setFieldValue(field.key, !checked)}
@@ -547,7 +553,7 @@ export default function FormWizard({ sections, token, initialData, invitation, i
                           <span className="text-gray-400 w-28 sm:w-40 shrink-0 text-xs pt-0.5 leading-tight">{field.label}</span>
                           <span className="text-gray-900 font-medium text-xs flex-1 min-w-0 break-words">
                             {field.type === 'checkbox'
-                              ? (formData[field.key] ? '✗ Yes' : '—')
+                              ? (formData[field.key] ? '✓ Yes' : '—')
                               : String(formData[field.key] || '').slice(0, 80)}
                           </span>
                         </div>
