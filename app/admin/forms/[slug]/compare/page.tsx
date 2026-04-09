@@ -45,7 +45,6 @@ export default function ComparePage() {
   const renderLeftRef = useRef<any>(null)
   const renderRightRef = useRef<any>(null)
 
-  // Load form info, fields, test data
   useEffect(() => {
     if (!slug) return
     supabase.from('form_templates').select('slug,name,page_count,pdf_template_path')
@@ -63,14 +62,12 @@ export default function ComparePage() {
       })
   }, [slug])
 
-  // Load PDF
   useEffect(() => {
     if (!pdfReady || !formInfo?.pdf_template_path) return
     const { data } = supabase.storage.from('form-templates').getPublicUrl(formInfo.pdf_template_path)
     if (data?.publicUrl) window.pdfjsLib.getDocument(data.publicUrl).promise.then((doc: any) => setPdf(doc))
   }, [pdfReady, formInfo])
 
-  // Render page on both canvases
   useEffect(() => {
     if (!pdf) return
     let cancelled = false
@@ -81,7 +78,6 @@ export default function ComparePage() {
       setVpW(vp1.width); setVpH(vp1.height)
       const vp = page.getViewport({ scale })
 
-      // Render left canvas (mapper)
       if (canvasLeftRef.current) {
         const canvas = canvasLeftRef.current
         canvas.width = vp.width; canvas.height = vp.height
@@ -90,12 +86,10 @@ export default function ComparePage() {
         try { await renderLeftRef.current.promise } catch {}
       }
 
-      // Render right canvas (preview)
       if (canvasRightRef.current) {
         const canvas = canvasRightRef.current
         canvas.width = vp.width; canvas.height = vp.height
         if (renderRightRef.current) { try { renderRightRef.current.cancel() } catch {} }
-        // Need to re-get the page for a second render
         const page2 = await pdf.getPage(pageNum)
         renderRightRef.current = page2.render({ canvasContext: canvas.getContext('2d')!, viewport: vp })
         try { await renderRightRef.current.promise } catch {}
@@ -245,17 +239,19 @@ export default function ComparePage() {
                     style={{ width: vpW * scale, height: vpH * scale }}
                   >
                     {pageFields.map(f => {
-                      const left = f.x * scale
-                      const top = f.y * scale
-                      const width = f.width * scale
-                      const height = f.height * scale
                       const isCheckbox = f.field_type === 'checkbox' || (f.field_type === 'text' && f.width < 16)
                       const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
                       const value = testData[f.field_key] || ''
 
+                      // Scale coordinates
+                      const left = f.x * scale
+                      const top = f.y * scale
+                      const width = f.width * scale
+                      const height = f.height * scale
+
                       if (isCheckbox) {
                         const checked = value === 'true'
-                        const boxSize = Math.min(width * 0.85, height * 0.85)
+                        const boxSize = Math.min(width * 0.85, height * 0.85, 12)
                         return (
                           <div
                             key={f.field_key}
@@ -263,29 +259,16 @@ export default function ComparePage() {
                             style={{ left, top, width, height }}
                             title={f.field_key}
                           >
-                            <div
-                              style={{
-                                width: boxSize,
-                                height: boxSize,
-                                border: `1px solid ${color}40`,
-                                borderRadius: 1,
-                                position: 'relative',
-                                backgroundColor: checked ? '#f0fdf4' : 'transparent',
-                              }}
-                            >
+                            <div style={{
+                              width: boxSize, height: boxSize,
+                              border: `1px solid ${color}40`,
+                              borderRadius: 1,
+                              position: 'relative',
+                              backgroundColor: checked ? '#f0fdf4' : 'transparent',
+                            }}>
                               {checked && (
-                                <svg
-                                  viewBox="0 0 10 10"
-                                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-                                >
-                                  <polyline
-                                    points="2,5.5 4.2,7.8 8,2.5"
-                                    fill="none"
-                                    stroke="#16a34a"
-                                    strokeWidth="1.8"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
+                                <svg viewBox="0 0 10 10" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+                                  <polyline points="2,5.5 4.2,7.8 8,2.5" fill="none" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
                               )}
                             </div>
@@ -293,41 +276,62 @@ export default function ComparePage() {
                         )
                       }
 
+                      // For text/sig/initial fields: show value with comfortable spacing
+                      // Use a min render height of 16px so text always has breathing room
+                      const renderH = Math.max(height, 16)
+                      // Shift upward by the extra height so bottom stays anchored to coordinate
+                      const renderTop = top - (renderH - height)
+                      const isSig = f.is_signature || f.field_type === 'signature'
+                      const isInit = f.is_initial || f.field_type === 'initial'
+                      // Comfortable font: min 8, max 11, not tied to box height
+                      const fontSize = Math.max(8, Math.min(11, 9 * scale))
+
                       if (!value) {
                         return (
                           <div
                             key={f.field_key}
                             className="absolute"
                             style={{
-                              left, top, width, height,
-                              borderBottom: `1px dashed ${color}40`,
+                              left, top: renderTop, width, height: renderH,
+                              borderBottom: `1px dashed ${color}30`,
                             }}
                             title={f.field_key}
                           />
                         )
                       }
 
-                      const isSig = f.is_signature || f.field_type === 'signature'
-                      const isInit = f.is_initial || f.field_type === 'initial'
-                      const fontSize = Math.max(7, Math.min(height * 0.7, 13))
-
                       return (
                         <div
                           key={f.field_key}
-                          className="absolute overflow-hidden whitespace-nowrap"
+                          className="absolute flex items-end overflow-hidden"
                           style={{
-                            left, top, width, height,
+                            left,
+                            top: renderTop,
+                            width,
+                            height: renderH,
+                            paddingLeft: 3,
+                            paddingRight: 2,
+                            paddingBottom: 2,
+                            backgroundColor: isSig || isInit
+                              ? 'rgba(139,92,246,0.06)'
+                              : 'rgba(59,130,246,0.06)',
+                            borderBottom: `1px solid ${color}40`,
+                          }}
+                          title={`${f.field_key}: ${value}`}
+                        >
+                          <span style={{
                             fontSize,
                             fontFamily: isSig || isInit ? 'cursive, Georgia, serif' : 'Arial, sans-serif',
                             fontStyle: isSig || isInit ? 'italic' : 'normal',
                             color: isSig || isInit ? '#1e40af' : '#111827',
-                            lineHeight: `${height}px`,
-                            paddingLeft: 2,
-                            borderBottom: `1px solid ${color}30`,
-                          }}
-                          title={`${f.field_key}: ${value}`}
-                        >
-                          {value}
+                            lineHeight: 1,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            display: 'block',
+                            maxWidth: '100%',
+                          }}>
+                            {value}
+                          </span>
                         </div>
                       )
                     })}
