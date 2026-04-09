@@ -37,13 +37,21 @@
 
   /* Layers */
   .layer-toggles { display: flex; gap: 6px; align-items: center; }
-  .layer-btn { height: 26px; padding: 0 8px; border-radius: 4px; border: 1px solid; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
-  .layer-btn.active { opacity: 1; }
-  .layer-btn.inactive { opacity: 0.45; }
-  .layer-text { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
-  .layer-checkbox { border-color: #8b5cf6; color: #7c3aed; background: #f5f3ff; }
-  .layer-sig { border-color: #ef4444; color: #dc2626; background: #fef2f2; }
+  .layer-btn { height: 28px; padding: 0 10px; border-radius: 6px; border: 1.5px solid; font-size: 11px; font-weight: 700; cursor: pointer; transition: all 0.12s ease; user-select: none; box-shadow: 0 1px 3px rgba(0,0,0,0.10); }
+  .layer-btn:hover { filter: brightness(0.94); transform: translateY(-1px); box-shadow: 0 3px 6px rgba(0,0,0,0.13); }
+  .layer-btn:active { transform: translateY(1px) scale(0.96); box-shadow: inset 0 2px 4px rgba(0,0,0,0.18); filter: brightness(0.88); }
+  .layer-btn.inactive { opacity: 0.40; filter: grayscale(0.3); }
+  /* Unselected state — soft colored pill */
+  .layer-text    { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
+  .layer-checkbox{ border-color: #8b5cf6; color: #7c3aed; background: #f5f3ff; }
+  .layer-sig     { border-color: #ef4444; color: #dc2626; background: #fef2f2; }
   .layer-initial { border-color: #f59e0b; color: #d97706; background: #fffbeb; }
+  /* draw-active (selected draw type) — solid filled, white text, inset shadow */
+  .layer-btn.draw-active { color: #fff !important; box-shadow: inset 0 2px 4px rgba(0,0,0,0.20), 0 1px 2px rgba(0,0,0,0.08); transform: translateY(0); }
+  .layer-text.draw-active    { background: #2563eb; border-color: #1d4ed8; }
+  .layer-checkbox.draw-active{ background: #7c3aed; border-color: #6d28d9; }
+  .layer-sig.draw-active     { background: #dc2626; border-color: #b91c1c; }
+  .layer-initial.draw-active { background: #d97706; border-color: #b45309; }
 
   /* Main layout */
   .main { display: flex; flex: 1; overflow: hidden; }
