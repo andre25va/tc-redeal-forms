@@ -14,6 +14,18 @@ import { PdfField } from '@/types'
  *   4. Signatures (data-URL PNGs) are embedded as images.
  *   5. Flatten the AcroForm at the end (empty checkbox "off" state = plain box outline).
  */
+
+/** Returns true only for explicitly affirmative values — prevents 'no'/'false' strings
+ *  from being treated as truthy and incorrectly drawing a checkmark. */
+function isAffirmative(value: unknown): boolean {
+  if (value === true || value === 1) return true
+  if (typeof value === 'string') {
+    const v = value.toLowerCase().trim()
+    return v === 'true' || v === 'yes' || v === '1' || v === 'checked'
+  }
+  return false
+}
+
 export async function overlayFormData(
   pdfBytes: Uint8Array,
   formData: Record<string, unknown>,
@@ -55,7 +67,9 @@ export async function overlayFormData(
           // Don't call cb.check() — we draw checkmarks after flatten instead
           const cb = form.getCheckBox(field.key)
           cb.uncheck()
-          if (value) checkedBoxes.push(field)
+          // Only affirmative values draw a checkmark (yes/true/'1') —
+          // 'no'/'false' strings are falsy in intent but truthy in JS, so we check explicitly
+          if (isAffirmative(value)) checkedBoxes.push(field)
         } else {
           const tf = form.getTextField(field.key)
           tf.setText(formatValue(field, value))
@@ -73,7 +87,7 @@ export async function overlayFormData(
     if (!page) continue
 
     if (field.type === 'checkbox') {
-      if (value) checkedBoxes.push(field)
+      if (isAffirmative(value)) checkedBoxes.push(field)
     } else {
       const fontSize = field.fontSize ?? 9
       const color    = rgb(0, 0, 0)

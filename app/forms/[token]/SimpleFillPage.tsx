@@ -117,7 +117,7 @@ function PreviewPanel({
 
   const getDisplayValue = (f: FullField): string => {
     const v = formData[f.field_key] ?? ''
-    if (f.field_type === 'checkbox') return v === 'true' ? '✓' : ''
+    if (f.field_type === 'checkbox') return (v === 'true' || v === 'yes') ? '✓' : ''
     return v
   }
 
