@@ -288,7 +288,7 @@ export default function SimpleFillPage({
     submitting: 'Enviando…', saving: 'Guardando…', saved: '✓ Guardado',
     saveError: 'Error al guardar', section: 'Sección', of: 'de',
     autoSaved: 'Su progreso se guarda automáticamente.',
-    applies: 'Aplica',
+    applies: 'Seleccionar',
     stateTitle: '¿Dónde está ubicada la propiedad?',
     stateSubtitle: 'Seleccione el estado para comenzar',
     previewPdf: 'Vista Previa PDF',
@@ -298,7 +298,7 @@ export default function SimpleFillPage({
     submitting: 'Submitting…', saving: 'Saving…', saved: '✓ Saved',
     saveError: 'Save error', section: 'Section', of: 'of',
     autoSaved: 'Your progress is automatically saved.',
-    applies: 'Applies',
+    applies: 'Select',
     stateTitle: 'Where is the property located?',
     stateSubtitle: 'Select the state to get started',
     previewPdf: 'Preview PDF',
@@ -429,10 +429,10 @@ export default function SimpleFillPage({
                         </div>
                       ) : field.type === 'checkbox' ? (
                         <button onClick={() => onChange(field.key, formData[field.key] === 'true' ? '' : 'true')} className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${formData[field.key] === 'true' ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}`}>
-                          {formData[field.key] === 'true' ? '✓ ' : ''}{t.applies}
+                          {formData[field.key] === 'true' ? '✓ Selected' : t.applies}
                         </button>
                       ) : (
-                        <input type={field.type === 'number' ? 'number' : 'text'} value={formData[field.key] ?? ''} onChange={e => onChange(field.key, e.target.value)} placeholder={field.label} className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-gray-900 bg-gray-50 focus:bg-white transition placeholder-gray-300" />
+                        <input type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={formData[field.key] ?? ''} onChange={e => onChange(field.key, e.target.value)} placeholder={field.label} className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-gray-900 bg-gray-50 focus:bg-white transition placeholder-gray-300" />
                       )}
                     </div>
                   ))}
