@@ -802,7 +802,7 @@ async function saveToSupabase() {
 
     if (upserts.length) {
       const { error } = await sbClient.from('field_coordinates').upsert(upserts, {
-        onConflict: 'form_slug,field_key,page_num'
+        onConflict: 'form_slug,field_key'
       });
       if (error) throw error;
     }
