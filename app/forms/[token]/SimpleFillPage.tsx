@@ -195,7 +195,7 @@ function PreviewPanel({
             const left = f.x * scale
             const top = f.y * scale
             const width = f.width * scale
-            const height = Math.max(f.height * scale, 10)
+            const height = Math.max(f.height * scale, 12)
 
             return (
               <div
@@ -206,13 +206,14 @@ function PreviewPanel({
                   top,
                   width,
                   height,
-                  background: 'rgba(255,255,255,0.92)',
-                  fontSize: Math.max(7, Math.min(10, height * 0.72)),
+                  background: 'rgba(255,255,255,0.95)',
+                  fontSize: 9,
                   lineHeight: 1,
-                  paddingLeft: 1,
-                  color: '#111',
+                  paddingLeft: 2,
+                  color: '#1a1a1a',
                   fontFamily: 'Helvetica, Arial, sans-serif',
-                  zIndex: 2,
+                  fontWeight: 500,
+                  zIndex: 10,
                 }}
               >
                 {val}
