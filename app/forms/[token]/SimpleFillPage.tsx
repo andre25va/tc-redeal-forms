@@ -206,13 +206,13 @@ function PreviewPanel({
                   top,
                   width,
                   height,
-                  background: 'rgba(255,255,255,0.95)',
+                  background: 'rgba(219,234,254,0.92)',
                   fontSize: 9,
                   lineHeight: 1,
                   paddingLeft: 2,
-                  color: '#1a1a1a',
+                  color: '#1e40af',
                   fontFamily: 'Helvetica, Arial, sans-serif',
-                  fontWeight: 500,
+                  fontWeight: 600,
                   zIndex: 10,
                 }}
               >
