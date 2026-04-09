@@ -58,7 +58,6 @@ export default async function FormPage({ params }: { params: { token: string } }
     )
   }
 
-  // Load form template (generic — works for any form_slug)
   const { data: formTemplate } = await supabase
     .from('form_templates')
     .select('name, pdf_template_path, page_count')
@@ -79,14 +78,12 @@ export default async function FormPage({ params }: { params: { token: string } }
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const pdfUrl = `${supabaseUrl}/storage/v1/object/public/form-templates/${formTemplate.pdf_template_path}`
 
-  // Load field coordinates for this form
   const { data: fields } = await supabase
     .from('field_coordinates')
     .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial, required')
     .eq('form_slug', invitation.form_slug)
     .order('page_num', { ascending: true })
 
-  // Load any previously saved data
   const { data: submission } = await supabase
     .from('form_submissions')
     .select('form_data')
@@ -98,6 +95,7 @@ export default async function FormPage({ params }: { params: { token: string } }
   return (
     <PdfFillPage
       token={params.token}
+      formSlug={invitation.form_slug}
       formName={formTemplate.name}
       pdfUrl={pdfUrl}
       pageCount={formTemplate.page_count}
