@@ -288,7 +288,7 @@ export default function SimpleFillPage({
     submitting: 'Enviando…', saving: 'Guardando…', saved: '✓ Guardado',
     saveError: 'Error al guardar', section: 'Sección', of: 'de',
     autoSaved: 'Su progreso se guarda automáticamente.',
-    applies: 'Seleccionar',
+    applies: 'Aplica',
     stateTitle: '¿Dónde está ubicada la propiedad?',
     stateSubtitle: 'Seleccione el estado para comenzar',
     previewPdf: 'Vista Previa PDF',
@@ -298,7 +298,7 @@ export default function SimpleFillPage({
     submitting: 'Submitting…', saving: 'Saving…', saved: '✓ Saved',
     saveError: 'Save error', section: 'Section', of: 'of',
     autoSaved: 'Your progress is automatically saved.',
-    applies: 'Select',
+    applies: 'Applies',
     stateTitle: 'Where is the property located?',
     stateSubtitle: 'Select the state to get started',
     previewPdf: 'Preview PDF',
@@ -428,11 +428,25 @@ export default function SimpleFillPage({
                           })}
                         </div>
                       ) : field.type === 'checkbox' ? (
-                        <button onClick={() => onChange(field.key, formData[field.key] === 'true' ? '' : 'true')} className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${formData[field.key] === 'true' ? 'bg-indigo-500 border-indigo-500 text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}`}>
-                          {formData[field.key] === 'true' ? '✓ Selected' : t.applies}
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          {(['yes', 'no'] as const).map(opt => {
+                            const isYes = opt === 'yes'
+                            const selected = isYes ? formData[field.key] === 'true' : formData[field.key] === 'false'
+                            const selectedStyle = isYes ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm' : 'bg-rose-400 border-rose-400 text-white shadow-sm'
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => onChange(field.key, selected ? '' : isYes ? 'true' : 'false')}
+                                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${selected ? selectedStyle : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}`}
+                              >
+                                {selected && '✓ '}{isYes ? (language === 'es' ? 'Sí' : 'Yes') : 'No'}
+                              </button>
+                            )
+                          })}
+                        </div>
                       ) : (
-                        <input type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} value={formData[field.key] ?? ''} onChange={e => onChange(field.key, e.target.value)} placeholder={field.label} className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-gray-900 bg-gray-50 focus:bg-white transition placeholder-gray-300" />
+                        <input type={field.type === 'number' ? 'number' : 'text'} value={formData[field.key] ?? ''} onChange={e => onChange(field.key, e.target.value)} placeholder={field.label} className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none text-sm text-gray-900 bg-gray-50 focus:bg-white transition placeholder-gray-300" />
                       )}
                     </div>
                   ))}
