@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Upload, FileText, MapPin, Trash2, ArrowLeft, Plus, ExternalLink, Loader2 } from 'lucide-react'
+import { Upload, FileText, MapPin, Trash2, ArrowLeft, Plus, ExternalLink, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -42,17 +42,24 @@ async function loadPdfJs(): Promise<any> {
   })
 }
 
+type UploadStep = 'idle' | 'uploading' | 'scanning' | 'done' | 'error'
+
 export default function AdminFormsPage() {
   const [forms, setForms] = useState<FormTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [showUpload, setShowUpload] = useState(false)
-  const [uploading, setUploading] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [formName, setFormName] = useState('')
   const [formSlug, setFormSlug] = useState('')
   const [pageCount, setPageCount] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [fillingSlug, setFillingSlug] = useState<string | null>(null)
+
+  // Upload wizard state
+  const [uploadStep, setUploadStep] = useState<UploadStep>('idle')
+  const [autoMapResult, setAutoMapResult] = useState<{ fieldsFound: number; message: string } | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [lastUploadedSlug, setLastUploadedSlug] = useState<string | null>(null)
 
   useEffect(() => { loadForms() }, [])
 
@@ -79,6 +86,10 @@ export default function AdminFormsPage() {
   const handleFile = async (file: File) => {
     if (!file.type.includes('pdf')) { alert('Please upload a PDF file'); return }
     setUploadFile(file)
+    setUploadStep('idle')
+    setAutoMapResult(null)
+    setUploadError(null)
+    setLastUploadedSlug(null)
     setShowUpload(true)
     const pdfjsLib = await loadPdfJs()
     const buf = await file.arrayBuffer()
@@ -91,28 +102,60 @@ export default function AdminFormsPage() {
 
   const handleUpload = async () => {
     if (!uploadFile || !formSlug || !formName) return
-    setUploading(true)
+    setUploadStep('uploading')
+    setUploadError(null)
+    setAutoMapResult(null)
+
     try {
+      // Step 1: Upload PDF to storage
       const path = `${formSlug}/${formSlug}.pdf`
       const { error: storeErr } = await supabase.storage
         .from('form-templates')
         .upload(path, uploadFile, { upsert: true })
       if (storeErr) throw storeErr
 
+      // Step 2: Save form template record
       const { error: dbErr } = await supabase
         .from('form_templates')
-        .upsert({ slug: formSlug, name: formName, pdf_template_path: path, page_count: pageCount, is_active: true },
-          { onConflict: 'slug' })
+        .upsert(
+          { slug: formSlug, name: formName, pdf_template_path: path, page_count: pageCount, is_active: true },
+          { onConflict: 'slug' }
+        )
       if (dbErr) throw dbErr
 
-      setShowUpload(false)
-      setUploadFile(null); setFormName(''); setFormSlug(''); setPageCount(0)
+      setLastUploadedSlug(formSlug)
+
+      // Step 3: Auto-map AcroForm fields
+      setUploadStep('scanning')
+      const mapRes = await fetch('/api/admin/auto-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: formSlug }),
+      })
+      const mapData = await mapRes.json()
+
+      setAutoMapResult({
+        fieldsFound: mapData.fieldsFound ?? 0,
+        message: mapData.message || (mapData.error ? `Scan error: ${mapData.error}` : 'Scan complete'),
+      })
+      setUploadStep('done')
       await loadForms()
-    } catch (err) {
-      alert('Upload failed: ' + (err as Error).message)
-    } finally {
-      setUploading(false)
+    } catch (err: any) {
+      setUploadError(err.message || 'Upload failed')
+      setUploadStep('error')
     }
+  }
+
+  const closeUpload = () => {
+    setShowUpload(false)
+    setUploadFile(null)
+    setFormName('')
+    setFormSlug('')
+    setPageCount(0)
+    setUploadStep('idle')
+    setAutoMapResult(null)
+    setUploadError(null)
+    setLastUploadedSlug(null)
   }
 
   const deleteForm = async (slug: string) => {
@@ -145,6 +188,8 @@ export default function AdminFormsPage() {
       setFillingSlug(null)
     }
   }
+
+  const isUploading = uploadStep === 'uploading' || uploadStep === 'scanning'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -233,34 +278,137 @@ export default function AdminFormsPage() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
             <h2 className="font-bold text-gray-900 text-lg mb-4">New Form Template</h2>
+
             <div className="bg-indigo-50 rounded-xl p-3 mb-4 flex items-center gap-3">
-              <FileText className="w-8 h-8 text-indigo-500" />
+              <FileText className="w-8 h-8 text-indigo-500 shrink-0" />
               <div>
                 <p className="text-sm font-medium text-gray-900">{uploadFile?.name}</p>
                 <p className="text-xs text-gray-500">{pageCount} pages</p>
               </div>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Form Name</label>
-                <input type="text" value={formName}
-                  onChange={e => { setFormName(e.target.value); setFormSlug(nameToSlug(e.target.value)) }}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+
+            {/* Progress steps */}
+            {uploadStep !== 'idle' && (
+              <div className="mb-4 space-y-2">
+                {/* Step 1: Upload */}
+                <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm
+                  ${uploadStep === 'uploading' ? 'bg-indigo-50 text-indigo-700' :
+                    uploadStep === 'error' ? 'bg-red-50 text-red-600' :
+                    'bg-gray-50 text-gray-500'}`}>
+                  {uploadStep === 'uploading' ? (
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  ) : uploadStep === 'error' ? (
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 shrink-0 text-emerald-500" />
+                  )}
+                  <span className="font-medium">
+                    {uploadStep === 'uploading' ? 'Uploading PDF...' : 'PDF uploaded'}
+                  </span>
+                </div>
+
+                {/* Step 2: Scanning */}
+                {(uploadStep === 'scanning' || uploadStep === 'done') && (
+                  <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm
+                    ${uploadStep === 'scanning' ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-50 text-gray-500'}`}>
+                    {uploadStep === 'scanning' ? (
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    ) : (
+                      <CheckCircle className={`w-4 h-4 shrink-0 ${(autoMapResult?.fieldsFound ?? 0) > 0 ? 'text-emerald-500' : 'text-amber-500'}`} />
+                    )}
+                    <span className="font-medium">
+                      {uploadStep === 'scanning' ? 'Scanning for AcroForm fields...' : 'Scan complete'}
+                    </span>
+                  </div>
+                )}
+
+                {/* Result */}
+                {uploadStep === 'done' && autoMapResult && (
+                  <div className={`rounded-xl px-4 py-3 text-sm font-medium mt-1
+                    ${autoMapResult.fieldsFound > 0
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                    {autoMapResult.fieldsFound > 0 ? (
+                      <span>✓ {autoMapResult.fieldsFound} fields auto-mapped! Open the mapper to review and rename.</span>
+                    ) : (
+                      <span>⚠ {autoMapResult.message}</span>
+                    )}
+                  </div>
+                )}
+
+                {uploadStep === 'error' && uploadError && (
+                  <div className="rounded-xl px-4 py-3 text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+                    ✗ {uploadError}
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Slug (URL-safe)</label>
-                <input type="text" value={formSlug}
-                  onChange={e => setFormSlug(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            )}
+
+            {/* Form fields — only show before upload starts */}
+            {uploadStep === 'idle' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">Form Name</label>
+                  <input type="text" value={formName}
+                    onChange={e => { setFormName(e.target.value); setFormSlug(nameToSlug(e.target.value)) }}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">Slug (URL-safe)</label>
+                  <input type="text" value={formSlug}
+                    onChange={e => setFormSlug(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
               </div>
-            </div>
+            )}
+
             <div className="flex gap-3 mt-5">
-              <button onClick={() => { setShowUpload(false); setUploadFile(null); setFormName(''); setFormSlug(''); setPageCount(0) }}
-                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={handleUpload} disabled={uploading || !formSlug || !formName}
-                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-50">
-                {uploading ? 'Uploading...' : 'Create Form'}
-              </button>
+              {uploadStep === 'done' ? (
+                <>
+                  <button onClick={closeUpload}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                    Close
+                  </button>
+                  {lastUploadedSlug && (
+                    <Link href={`/admin/forms/${lastUploadedSlug}/mapper`}
+                      onClick={closeUpload}
+                      className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold text-center">
+                      Open Mapper →
+                    </Link>
+                  )}
+                </>
+              ) : uploadStep === 'error' ? (
+                <>
+                  <button onClick={closeUpload}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                    Close
+                  </button>
+                  <button onClick={() => { setUploadStep('idle'); setUploadError(null) }}
+                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold">
+                    Try Again
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={closeUpload}
+                    disabled={isUploading}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpload}
+                    disabled={isUploading || !formSlug || !formName}
+                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-50">
+                    {isUploading ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {uploadStep === 'uploading' ? 'Uploading...' : 'Scanning...'}
+                      </span>
+                    ) : 'Create Form'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
