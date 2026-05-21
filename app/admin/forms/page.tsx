@@ -54,6 +54,11 @@ export default function AdminFormsPage() {
   const [pageCount, setPageCount] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [fillingSlug, setFillingSlug] = useState<string | null>(null)
+  const [fillModalSlug, setFillModalSlug] = useState<string | null>(null)
+  const [fillSellerName, setFillSellerName] = useState('')
+  const [fillSellerEmail, setFillSellerEmail] = useState('')
+  const [fillAddress, setFillAddress] = useState('')
+  const [fillMls, setFillMls] = useState('')
 
   // Upload wizard state
   const [uploadStep, setUploadStep] = useState<UploadStep>('idle')
@@ -167,21 +172,37 @@ export default function AdminFormsPage() {
     await loadForms()
   }
 
-  const fillForm = async (slug: string) => {
-    setFillingSlug(slug)
+  const openFillModal = (slug: string) => {
+    setFillModalSlug(slug)
+    setFillSellerName('')
+    setFillSellerEmail('tc@myredeal.com')
+    setFillAddress('')
+    setFillMls('')
+  }
+
+  const closeFillModal = () => {
+    setFillModalSlug(null)
+  }
+
+  const fillForm = async () => {
+    if (!fillModalSlug) return
+    setFillingSlug(fillModalSlug)
     try {
       const res = await fetch('/api/invitations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          seller_email: 'tc@myredeal.com',
-          seller_name: 'Test Fill',
-          form_slug: slug,
+          seller_email: fillSellerEmail || 'tc@myredeal.com',
+          seller_name: fillSellerName || 'Test Fill',
+          property_address: fillAddress,
+          mls_number: fillMls,
+          form_slug: fillModalSlug,
         }),
       })
       const data = await res.json()
       if (!data.formUrl) throw new Error(data.error || 'No form URL returned')
       window.open(data.formUrl, '_blank')
+      closeFillModal()
     } catch (err) {
       alert('Could not open form: ' + (err as Error).message)
     } finally {
@@ -247,13 +268,10 @@ export default function AdminFormsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => fillForm(form.slug)}
-                  disabled={fillingSlug === form.slug}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                  onClick={() => openFillModal(form.slug)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
                 >
-                  {fillingSlug === form.slug
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <ExternalLink className="w-4 h-4" />}
+                  <ExternalLink className="w-4 h-4" />
                   Fill Form
                 </button>
                 <Link
@@ -413,6 +431,77 @@ export default function AdminFormsPage() {
           </div>
         </div>
       )}
+      {/* Fill Form Modal */}
+      {fillModalSlug && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <h2 className="font-bold text-gray-900 text-lg mb-1">Send Form to Seller</h2>
+            <p className="text-xs text-gray-400 mb-5">A unique link will be created and opened in a new tab.</p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Seller Name</label>
+                <input
+                  type="text"
+                  placeholder="Jane Smith"
+                  value={fillSellerName}
+                  onChange={e => setFillSellerName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Seller Email</label>
+                <input
+                  type="email"
+                  placeholder="seller@email.com"
+                  value={fillSellerEmail}
+                  onChange={e => setFillSellerEmail(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Property Address</label>
+                <input
+                  type="text"
+                  placeholder="123 Main St, Kansas City, MO 64101"
+                  value={fillAddress}
+                  onChange={e => setFillAddress(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">MLS # <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. 2412345"
+                  value={fillMls}
+                  onChange={e => setFillMls(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={closeFillModal}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={fillForm}
+                disabled={fillingSlug === fillModalSlug}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {fillingSlug === fillModalSlug
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening...</>
+                  : <><ExternalLink className="w-4 h-4" /> Open Form</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const {
       seller_email, seller_name, property_address,
+      mls_number,
       realtor_email, realtor_name, broker_email, broker_name,
       created_by, form_slug,
     } = body
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
         seller_email,
         seller_name,
         property_address,
+        mls_number: mls_number || null,
         realtor_email,
         realtor_name,
         broker_email,
