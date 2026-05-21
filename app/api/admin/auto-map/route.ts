@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import {
-  PDFDocument, PDFName, PDFRef, PDFArray,
+  PDFDocument, PDFName, PDFRef, PDFArray, PDFDict, PDFNumber,
   PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList, PDFRadioGroup,
 } from 'pdf-lib'
 
@@ -9,6 +9,36 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
+
+function safeGetRect(widget: any): { x: number; y: number; width: number; height: number } | null {
+  try {
+    // Try high-level API first
+    const rect = widget.getRectangle()
+    if (rect && typeof rect.x === 'number') return rect
+  } catch {}
+
+  try {
+    // Fall back to raw dict lookup
+    const dict: PDFDict = widget.dict ?? widget.acroField?.dict
+    if (!dict) return null
+    const rectArr = dict.lookup(PDFName.of('Rect'))
+    if (!(rectArr instanceof PDFArray) || rectArr.size() < 4) return null
+    const nums = [0, 1, 2, 3].map(i => {
+      const v = rectArr.get(i)
+      return v instanceof PDFNumber ? v.asNumber() : 0
+    })
+    // PDF rect = [llx, lly, urx, ury]
+    const [llx, lly, urx, ury] = nums
+    return {
+      x: Math.min(llx, urx),
+      y: Math.min(lly, ury),
+      width: Math.abs(urx - llx),
+      height: Math.abs(ury - lly),
+    }
+  } catch {}
+
+  return null
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,23 +60,33 @@ export async function POST(req: NextRequest) {
     let pdfDoc: PDFDocument
     try {
       pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true })
-    } catch (e) {
-      return NextResponse.json({ fieldsFound: 0, message: 'Could not parse PDF' })
+    } catch {
+      return NextResponse.json({ fieldsFound: 0, message: 'Could not parse PDF — use Map Fields to add fields manually.' })
     }
 
     const pages = pdfDoc.getPages()
 
-    // 3. Try to get AcroForm
-    let form: any
+    // 3. Try to get AcroForm fields
+    let fields: any[] = []
     try {
-      form = pdfDoc.getForm()
+      const form = pdfDoc.getForm()
+      fields = form.getFields() ?? []
     } catch {
-      return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm found in this PDF. Use Map Fields to add fields manually.' })
+      // getForm() failed — try raw AcroForm dict
+      try {
+        const catalog = pdfDoc.catalog
+        const acroForm = catalog.lookup(PDFName.of('AcroForm'), PDFDict)
+        const fieldsArr = acroForm?.lookup(PDFName.of('Fields'), PDFArray)
+        if (!fieldsArr || fieldsArr.size() === 0) {
+          return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm fields found — use Map Fields to add fields manually.' })
+        }
+        // Can't easily iterate raw — fall through to 0 fields message
+      } catch {}
+      return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm found — use Map Fields to add fields manually.' })
     }
 
-    const fields = form.getFields()
-    if (!fields || fields.length === 0) {
-      return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm fields found. Use Map Fields to add fields manually.' })
+    if (!fields.length) {
+      return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm fields found — use Map Fields to add fields manually.' })
     }
 
     // 4. Build annotation ref → page index map
@@ -72,11 +112,12 @@ export async function POST(req: NextRequest) {
     for (const field of fields) {
       let widgets: any[] = []
       try { widgets = field.acroField.getWidgets() } catch { continue }
+      if (!Array.isArray(widgets)) continue
 
       for (const widget of widgets) {
-        let rect: any
-        try { rect = widget.getRectangle() } catch { continue }
-        if (!rect) continue
+        // Use robust rect extraction
+        const rect = safeGetRect(widget)
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue
 
         // Find page
         let pageIndex = 0
@@ -96,7 +137,7 @@ export async function POST(req: NextRequest) {
         // Sanitize field name to a key
         let rawName = ''
         try { rawName = field.getName() } catch { rawName = 'field' }
-        let key = rawName
+        let key = (rawName || 'field')
           .toLowerCase()
           .replace(/[^a-z0-9]/g, '_')
           .replace(/_+/g, '_')
@@ -120,7 +161,6 @@ export async function POST(req: NextRequest) {
         } else if (field instanceof PDFRadioGroup) {
           fieldType = 'radio'
         } else {
-          // Check for signature field (FT = /Sig)
           try {
             const ft = field.acroField.dict.lookup(PDFName.of('FT'))
             if (ft && ft.toString() === '/Sig') {
@@ -130,17 +170,14 @@ export async function POST(req: NextRequest) {
           } catch { /* not a sig */ }
         }
 
-        const height = Math.max(12, Math.round(rect.height))
-        const y = Math.round(yFromTop)
-
         coordinates.push({
           form_slug: slug,
           field_key: key,
           page_num: pageIndex + 1,
           x: Math.round(rect.x),
-          y,
+          y: Math.round(yFromTop),
           width: Math.round(rect.width),
-          height,
+          height: Math.max(12, Math.round(rect.height)),
           field_type: fieldType,
           is_signature: isSignature,
           is_initial: false,
@@ -150,7 +187,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (coordinates.length === 0) {
-      return NextResponse.json({ fieldsFound: 0, message: 'No mappable fields found. Use Map Fields to add fields manually.' })
+      return NextResponse.json({ fieldsFound: 0, message: 'No mappable fields extracted — use Map Fields to add fields manually.' })
     }
 
     // 6. Upsert into field_coordinates
