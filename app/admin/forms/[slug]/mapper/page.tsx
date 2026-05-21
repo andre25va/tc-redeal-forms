@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -19,6 +19,12 @@ interface Field {
   form_slug: string; field_key: string; page_num: number
   x: number; y: number; width: number; height: number
   field_type: string | null; is_signature: boolean; is_initial: boolean; required: boolean
+}
+interface SuggestedField {
+  id: string
+  field_key: string; field_type: string; page_num: number
+  x: number; y: number; width: number; height: number
+  label: string
 }
 interface TextItem { str: string; x: number; y: number; width: number; height: number }
 interface FormInfo { slug: string; name: string; page_count: number; pdf_template_path: string }
@@ -73,6 +79,11 @@ export default function MapperPage() {
   const [allFields, setAllFields] = useState<Field[]>([])
   const [textItems, setTextItems] = useState<TextItem[]>([])
   const [pendingChanges, setPendingChanges] = useState<Map<string, Field>>(new Map())
+
+  // Auto-suggest state
+  const [suggestedFields, setSuggestedFields] = useState<SuggestedField[]>([])
+  const [suggesting, setSuggesting] = useState<boolean | string>(false) // false | true | 'saving'
+  const [hoveredSugId, setHoveredSugId] = useState<string | null>(null)
 
   const [drawType, setDrawType] = useState('text')
   const [filterType, setFilterType] = useState<string | null>(null)
@@ -173,6 +184,167 @@ export default function MapperPage() {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [selectedKey])
+
+  // ── Auto-suggest ──────────────────────────────────────────────
+  const runAutoSuggest = async () => {
+    if (!pdf || !formInfo) return
+    setSuggesting(true)
+
+    try {
+      const blanks: any[] = []
+      const totalPages = formInfo.page_count || pdf.numPages
+
+      for (let p = 1; p <= totalPages; p++) {
+        const page = await pdf.getPage(p)
+        const vp1 = page.getViewport({ scale: 1 })
+        const tc = await page.getTextContent()
+        const items = (tc.items as any[])
+          .filter(i => i.str?.trim())
+          .map(i => {
+            const fontSize = Math.abs(i.transform[3]) || Math.abs(i.transform[0]) || 12
+            return {
+              str: i.str as string,
+              x: i.transform[4] as number,
+              y: vp1.height - i.transform[5] - fontSize,
+              width: (i.width as number) || 50,
+              height: fontSize,
+              page: p,
+            }
+          })
+
+        for (const item of items) {
+          // Detect underscore-based blanks (3+ underscores make up most of the string)
+          const underscoreRatio = (item.str.match(/_/g) || []).length / item.str.length
+          if (underscoreRatio < 0.5 || item.str.replace(/[_\s]/g, '').length > 2) continue
+
+          // Find nearest label (text to the left or above, not underscores)
+          let bestLabel = ''
+          let bestDist = Infinity
+          for (const other of items) {
+            if (other === item) continue
+            const otherUnderscoreRatio = (other.str.match(/_/g) || []).length / other.str.length
+            if (otherUnderscoreRatio > 0.4) continue
+            if (other.str.trim().length < 2) continue
+
+            const dx = item.x - (other.x + other.width) // positive = other is to the left
+            const dy = item.y - other.y // positive = other is above
+
+            let d: number
+            if (dx >= 0 && dx < 250 && Math.abs(dy) < 15) {
+              // To the left, same line
+              d = dx + Math.abs(dy) * 3
+            } else if (dy >= 0 && dy < 40 && Math.abs(dx) < 100) {
+              // Above, nearby column
+              d = Math.abs(dx) * 0.5 + dy * 2
+            } else {
+              continue
+            }
+            if (d < bestDist) { bestDist = d; bestLabel = other.str.trim() }
+          }
+
+          blanks.push({
+            label: bestLabel || '',
+            x: item.x,
+            y: item.y,
+            width: Math.max(item.width, 60),
+            height: Math.max(item.height, 12),
+            page: p,
+          })
+        }
+      }
+
+      if (blanks.length === 0) {
+        setSuggesting(false)
+        alert('No underscore-style blanks detected in this PDF.\nThis form may use drawn lines instead of underscores.\nYou can still map fields manually by drawing boxes on the canvas.')
+        return
+      }
+
+      // Dedupe against existing fields (skip if position overlaps an existing field)
+      const existingFields = allFieldsRef.current
+      const filteredBlanks = blanks.filter(b => {
+        return !existingFields.some(
+          f => f.page_num === b.page &&
+            Math.abs(f.x - b.x) < 10 &&
+            Math.abs(f.y - b.y) < 10
+        )
+      })
+
+      if (filteredBlanks.length === 0) {
+        setSuggesting(false)
+        setSaveStatus('All detected blanks already mapped ✓')
+        setTimeout(() => setSaveStatus(''), 3000)
+        return
+      }
+
+      const res = await fetch('/api/admin/field-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blanks: filteredBlanks, formName: formInfo.name }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error || 'API error')
+
+      const suggestions: SuggestedField[] = (json.suggestions || []).map((s: any, i: number) => ({
+        ...s, id: `sug_${Date.now()}_${i}`,
+      }))
+      setSuggestedFields(suggestions)
+      if (suggestions.length > 0) setPageNum(suggestions[0].page_num)
+    } catch (e: any) {
+      alert('Auto-suggest failed: ' + e.message)
+    }
+    setSuggesting(false)
+  }
+
+  const acceptSuggestion = (sug: SuggestedField) => {
+    setEditingField({
+      form_slug: slug,
+      field_key: sug.field_key,
+      page_num: sug.page_num,
+      x: sug.x, y: sug.y,
+      width: sug.width, height: sug.height,
+      field_type: sug.field_type,
+      is_signature: sug.field_type === 'signature',
+      is_initial: sug.field_type === 'initial',
+      required: false,
+    })
+    setShowModal(true)
+    setSuggestedFields(prev => prev.filter(s => s.id !== sug.id))
+  }
+
+  const dismissSuggestion = (id: string) => {
+    setSuggestedFields(prev => prev.filter(s => s.id !== id))
+  }
+
+  const acceptAllSuggestions = async () => {
+    if (!suggestedFields.length) return
+    setSuggesting('saving')
+    const fields = suggestedFields.map(s => ({
+      form_slug: slug,
+      field_key: s.field_key,
+      page_num: s.page_num,
+      x: s.x, y: s.y,
+      width: s.width, height: s.height,
+      field_type: s.field_type,
+      is_signature: s.field_type === 'signature',
+      is_initial: s.field_type === 'initial',
+      required: false,
+    }))
+    const { error } = await supabase.from('field_coordinates').upsert(fields, { onConflict: 'form_slug,field_key,page_num' })
+    if (!error) {
+      setAllFields(prev => {
+        const existingKeys = new Set(prev.map(f => `${f.field_key}-${f.page_num}`))
+        const newFields = fields.filter(f => !existingKeys.has(`${f.field_key}-${f.page_num}`)) as Field[]
+        return [...prev, ...newFields]
+      })
+      setSuggestedFields([])
+      setSaveStatus(`✓ Accepted ${fields.length} suggested fields`)
+      setTimeout(() => setSaveStatus(''), 4000)
+    } else {
+      alert('Save error: ' + error.message)
+    }
+    setSuggesting(false)
+  }
+  // ─────────────────────────────────────────────────────────────
 
   const getSvgXY = (e: React.MouseEvent) => {
     if (!svgRef.current) return { x: 0, y: 0 }
@@ -350,6 +522,7 @@ export default function MapperPage() {
   } : null
   const pageFields = allFields.filter(f => f.page_num === pageNum)
   const visibleFields = filterType ? pageFields.filter(f => f.field_type === filterType) : pageFields
+  const pageSuggestions = suggestedFields.filter(s => s.page_num === pageNum)
   const sidebarFields = (filterType ? allFields.filter(f => f.field_type === filterType) : allFields)
     .filter(f => !searchQ || f.field_key.toLowerCase().includes(searchQ.toLowerCase()))
   const isDraggingOrResizing = cur.mode === 'dragging' || cur.mode === 'resizing'
@@ -372,11 +545,11 @@ export default function MapperPage() {
 
       <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
         {/* Toolbar */}
-        <header className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-3 shadow-sm z-10 flex-shrink-0">
+        <header className="bg-white border-b border-gray-200 px-4 py-2 flex items-center gap-3 shadow-sm z-10 flex-shrink-0 flex-wrap">
           <Link href="/admin/forms" className="p-1.5 hover:bg-gray-100 rounded-lg">
             <ArrowLeft className="w-5 h-5" />
           </Link>
-          <h1 className="font-bold text-gray-900 text-sm truncate">{formInfo.name}</h1>
+          <h1 className="font-bold text-gray-900 text-sm truncate max-w-xs">{formInfo.name}</h1>
           <span className="text-xs text-gray-400 flex-shrink-0">{allFields.length} fields</span>
           <div className="flex-1" />
 
@@ -399,6 +572,44 @@ export default function MapperPage() {
           <span className="text-xs font-mono text-gray-500 min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
           <button onClick={() => setScale(s => Math.min(3, +(s + 0.25).toFixed(2)))}
             className="p-1.5 hover:bg-gray-100 rounded-lg"><ZoomIn className="w-4 h-4" /></button>
+
+          {/* Auto-suggest button */}
+          <div className="w-px h-6 bg-gray-200 mx-1" />
+          {suggestedFields.length === 0 ? (
+            <button
+              onClick={runAutoSuggest}
+              disabled={!!suggesting || !pdf}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
+            >
+              {suggesting === true ? (
+                <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
+              ) : (
+                <><Wand2 className="w-3.5 h-3.5" />Auto-Suggest</>
+              )}
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-violet-700 bg-violet-100 px-2 py-1 rounded-full">
+                ✨ {suggestedFields.length} suggestions
+              </span>
+              <button
+                onClick={acceptAllSuggestions}
+                disabled={suggesting === 'saving'}
+                className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {suggesting === 'saving' ? (
+                  <span className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" />
+                ) : <Check className="w-3.5 h-3.5" />}
+                Accept All
+              </button>
+              <button
+                onClick={() => setSuggestedFields([])}
+                className="flex items-center gap-1 px-2 py-1.5 bg-gray-200 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />Clear
+              </button>
+            </div>
+          )}
 
           {pendingChanges.size > 0 && (
             <>
@@ -429,6 +640,22 @@ export default function MapperPage() {
           </button>
         </header>
 
+        {/* Suggestion page nav — shows when suggestions span multiple pages */}
+        {suggestedFields.length > 0 && (
+          <div className="bg-violet-50 border-b border-violet-200 px-4 py-1.5 flex items-center gap-3 text-xs text-violet-700 flex-shrink-0">
+            <Wand2 className="w-3.5 h-3.5" />
+            <span className="font-medium">Suggestions active</span>
+            <span className="text-violet-500">—</span>
+            <span>Hover a box to preview, click ✓ to accept (opens editor), ✕ to dismiss. Or use <strong>Accept All</strong> to save all at once.</span>
+            {Array.from(new Set(suggestedFields.map(s => s.page_num))).sort((a,b)=>a-b).map(p => (
+              <button key={p} onClick={() => setPageNum(p)}
+                className={`px-2 py-0.5 rounded font-bold transition-colors ${p === pageNum ? 'bg-violet-700 text-white' : 'bg-violet-200 text-violet-700 hover:bg-violet-300'}`}>
+                p{p}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex flex-1 overflow-hidden">
           {/* Left toolbar */}
           <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-2 flex-shrink-0">
@@ -456,7 +683,7 @@ export default function MapperPage() {
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-400">
                   <div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto mb-3" />
-                  <p className="text-sm">Loading PDF\u2026</p>
+                  <p className="text-sm">Loading PDF…</p>
                 </div>
               </div>
             ) : (
@@ -470,6 +697,7 @@ export default function MapperPage() {
                   onMouseUp={finalizeInteraction}
                   onMouseLeave={handleSvgMouseLeave}
                 >
+                  {/* Existing mapped fields */}
                   {visibleFields.map(f => {
                     const color = TYPE_COLORS[f.field_type || 'text'] || '#3b82f6'
                     const sel = f.field_key === selectedKey
@@ -510,6 +738,60 @@ export default function MapperPage() {
                       </g>
                     )
                   })}
+
+                  {/* Suggested (ghost) fields */}
+                  {pageSuggestions.map(s => {
+                    const sx = s.x * scale, sy = s.y * scale
+                    const sw = s.width * scale, sh = Math.max(s.height, 12) * scale
+                    const hovered = s.id === hoveredSugId
+                    return (
+                      <g key={s.id}
+                        onMouseEnter={() => setHoveredSugId(s.id)}
+                        onMouseLeave={() => setHoveredSugId(null)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <rect
+                          x={sx} y={sy} width={Math.max(1, sw)} height={Math.max(1, sh)}
+                          fill={hovered ? 'rgba(139,92,246,0.2)' : 'rgba(139,92,246,0.08)'}
+                          stroke="#8b5cf6"
+                          strokeWidth={hovered ? 2 : 1.5}
+                          strokeDasharray="5 3"
+                          rx={2}
+                        />
+                        {/* Label tooltip on hover */}
+                        {hovered && (
+                          <g>
+                            <rect x={sx} y={sy - 32} width={Math.max(sw, 140)} height={22}
+                              fill="#4c1d95" rx={4} />
+                            <text x={sx + 5} y={sy - 15} fill="white" fontSize={9} fontFamily="monospace"
+                              style={{ pointerEvents: 'none' }}>
+                              {s.field_key}
+                            </text>
+                          </g>
+                        )}
+                        {/* Accept button */}
+                        <g onClick={e => { e.stopPropagation(); acceptSuggestion(s) }}>
+                          <circle cx={sx + sw - 8} cy={sy + 8} r={8} fill="#10b981" />
+                          <text x={sx + sw - 8} y={sy + 12} textAnchor="middle" fill="white" fontSize={10} fontWeight="bold"
+                            style={{ pointerEvents: 'none' }}>✓</text>
+                        </g>
+                        {/* Dismiss button */}
+                        <g onClick={e => { e.stopPropagation(); dismissSuggestion(s.id) }}>
+                          <circle cx={sx + sw + 8} cy={sy + 8} r={8} fill="#ef4444" />
+                          <text x={sx + sw + 8} y={sy + 12} textAnchor="middle" fill="white" fontSize={10} fontWeight="bold"
+                            style={{ pointerEvents: 'none' }}>✕</text>
+                        </g>
+                        {/* Small label below */}
+                        {scale >= 1.2 && (
+                          <text x={sx + 2} y={sy + sh + 11} fill="#7c3aed" fontSize={8} fontFamily="monospace"
+                            style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                            {s.field_key.length > 30 ? s.field_key.slice(0, 30) + '…' : s.field_key}
+                          </text>
+                        )}
+                      </g>
+                    )
+                  })}
+
                   {drawGhost && (
                     <rect x={drawGhost.x} y={drawGhost.y} width={drawGhost.w} height={drawGhost.h}
                       fill="rgba(99,102,241,0.15)" stroke="#6366f1" strokeWidth={2} strokeDasharray="4 2" rx={2} />
@@ -533,6 +815,9 @@ export default function MapperPage() {
                   {sidebarFields.length} fields{filterType ? ` (${filterType})` : ''}
                   {pendingChanges.size > 0 && (
                     <span className="ml-1 text-orange-500 font-medium">\u00b7 {pendingChanges.size} unsaved</span>
+                  )}
+                  {suggestedFields.length > 0 && (
+                    <span className="ml-1 text-violet-600 font-medium">\u00b7 {suggestedFields.length} suggested</span>
                   )}
                 </span>
                 {filterType && (
