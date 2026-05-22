@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, ScanLine } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, AlignJustify } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -80,9 +80,10 @@ export default function MapperPage() {
   const [textItems, setTextItems] = useState<TextItem[]>([])
   const [pendingChanges, setPendingChanges] = useState<Map<string, Field>>(new Map())
 
-  // Auto-suggest state
+  // Auto-suggest / detect state
   const [suggestedFields, setSuggestedFields] = useState<SuggestedField[]>([])
   const [suggesting, setSuggesting] = useState<boolean | string>(false) // false | true | 'saving'
+  const [detecting, setDetecting] = useState(false)
   const [hoveredSugId, setHoveredSugId] = useState<string | null>(null)
 
   const [drawType, setDrawType] = useState('text')
@@ -347,166 +348,135 @@ export default function MapperPage() {
   // ─────────────────────────────────────────────────────────────
 
 
-  // ── Auto-detect (drawn lines) ────────────────────────────────
-  const runAutoDetect = async () => {
+  // ── Detect Drawn Lines + Checkboxes ──────────────────────────
+  const runDetectLines = async () => {
     if (!pdf || !formInfo) return
-    setSuggesting('detecting')
+    setDetecting(true)
 
     try {
-      const blanks: any[] = []
+      const allBlanks: any[] = []
       const totalPages = formInfo.page_count || pdf.numPages
-      const PDFOPS = (window as any).pdfjsLib.OPS
+      const pOPS = window.pdfjsLib.OPS || {}
+      const OPS_MOVETO    = pOPS.moveTo    ?? 13
+      const OPS_LINETO    = pOPS.lineTo    ?? 14
+      const OPS_CURVETO   = pOPS.curveTo   ?? 15
+      const OPS_CURVETO2  = pOPS.curveTo2  ?? 16
+      const OPS_CURVETO3  = pOPS.curveTo3  ?? 17
+      const OPS_RECTANGLE = pOPS.rectangle ?? 20
+      const OPS_CPATH     = pOPS.constructPath ?? 91
 
       for (let p = 1; p <= totalPages; p++) {
         const page = await pdf.getPage(p)
         const vp1 = page.getViewport({ scale: 1 })
-        const H = vp1.height
+        const PAGE_H = vp1.height
 
-        // Get text items for label matching
+        // Text items for label lookup
         const tc = await page.getTextContent()
-        const pageTextItems = (tc.items as any[])
-          .filter((i: any) => i.str?.trim())
-          .map((i: any) => {
-            const fontSize = Math.abs(i.transform[3]) || Math.abs(i.transform[0]) || 12
-            return {
-              str: i.str as string,
-              x: i.transform[4] as number,
-              y: H - i.transform[5] - fontSize,
-              width: (i.width as number) || 50,
-              height: fontSize,
-            }
+        const pageText: TextItem[] = (tc.items as any[])
+          .filter(i => i.str?.trim())
+          .map(i => {
+            const fs = Math.abs(i.transform[3]) || Math.abs(i.transform[0]) || 12
+            return { str: i.str as string, x: i.transform[4], y: PAGE_H - i.transform[5] - fs, width: (i.width as number) || 50, height: fs }
           })
 
-        // Scan operator list for horizontal line segments
-        const opList = await page.getOperatorList()
-        const rawLines: Array<{ x1: number; y: number; x2: number }> = []
+        const ops = await page.getOperatorList()
+        const lineSegs: Array<{ x1: number; y1: number; x2: number }> = []
+        const checkboxes: Array<{ x: number; y: number; w: number; h: number }> = []
 
-        for (let i = 0; i < opList.fnArray.length; i++) {
-          if (opList.fnArray[i] === PDFOPS.constructPath) {
-            const [pathOps, pathArgs] = opList.argsArray[i]
-            let argIdx = 0
-            let curX = 0, curY = 0
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          if (ops.fnArray[i] !== OPS_CPATH) continue
+          const subOps: number[] = ops.argsArray[i][0]
+          const coords: number[] = ops.argsArray[i][1]
+          let ci = 0, curX = 0, curY = 0
 
-            for (let j = 0; j < pathOps.length; j++) {
-              const op = pathOps[j]
-              if (op === PDFOPS.moveTo) {
-                curX = pathArgs[argIdx++]
-                curY = pathArgs[argIdx++]
-              } else if (op === PDFOPS.lineTo) {
-                const toX = pathArgs[argIdx++]
-                const toY = pathArgs[argIdx++]
-                // Horizontal line: y delta < 2pt, width > 20pt
-                if (Math.abs(toY - curY) < 2 && Math.abs(toX - curX) > 20) {
-                  rawLines.push({
-                    x1: Math.min(curX, toX),
-                    y: H - curY, // convert PDF coords (bottom-up) → screen-space (top-down)
-                    x2: Math.max(curX, toX),
-                  })
-                }
-                curX = toX; curY = toY
-              } else if (op === PDFOPS.curveTo) {
-                argIdx += 6
-              } else if (op === PDFOPS.curveTo2 || op === PDFOPS.curveTo3) {
-                argIdx += 4
-              } else if (op === PDFOPS.rectangle) {
-                argIdx += 4
+          for (const so of subOps) {
+            if (so === OPS_MOVETO) {
+              curX = coords[ci++]; curY = coords[ci++]
+            } else if (so === OPS_LINETO) {
+              const tx = coords[ci++]; const ty = coords[ci++]
+              if (Math.abs(ty - curY) < 2) {
+                const len = Math.abs(tx - curX)
+                if (len >= 20 && len <= 480)
+                  lineSegs.push({ x1: Math.min(curX, tx), y1: PAGE_H - curY, x2: Math.max(curX, tx) })
               }
-              // closePath, stroke, fill etc — no args consumed
-            }
+              curX = tx; curY = ty
+            } else if (so === OPS_RECTANGLE) {
+              const rx = coords[ci++]; const ry = coords[ci++]
+              const rw = Math.abs(coords[ci++]); const rh = Math.abs(coords[ci++])
+              if (rw >= 7 && rw <= 22 && rh >= 7 && rh <= 22)
+                checkboxes.push({ x: rx, y: PAGE_H - ry - rh, w: rw, h: rh })
+            } else if (so === OPS_CURVETO) { ci += 6 }
+            else if (so === OPS_CURVETO2 || so === OPS_CURVETO3) { ci += 4 }
           }
         }
 
-        if (rawLines.length === 0) continue
-
-        // Merge adjacent/overlapping lines at the same y (±2pt)
-        const used = new Set<number>()
-        const merged: typeof rawLines = []
-        for (let i = 0; i < rawLines.length; i++) {
-          if (used.has(i)) continue
-          let { x1, y, x2 } = rawLines[i]
-          for (let j = i + 1; j < rawLines.length; j++) {
-            if (used.has(j)) continue
-            const b = rawLines[j]
-            if (Math.abs(b.y - y) < 3 && b.x1 <= x2 + 5 && b.x2 >= x1 - 5) {
-              x1 = Math.min(x1, b.x1); x2 = Math.max(x2, b.x2)
-              used.add(j)
-            }
+        // Merge adjacent horizontal segments
+        lineSegs.sort((a, b) => Math.abs(a.y1 - b.y1) < 2 ? a.x1 - b.x1 : a.y1 - b.y1)
+        const mergedLines: Array<{ x: number; y: number; w: number }> = []
+        let j = 0
+        while (j < lineSegs.length) {
+          let { x1, y1, x2 } = lineSegs[j]
+          while (j + 1 < lineSegs.length && Math.abs(lineSegs[j + 1].y1 - y1) < 2 && lineSegs[j + 1].x1 <= x2 + 6) {
+            x2 = Math.max(x2, lineSegs[j + 1].x2); j++
           }
-          used.add(i)
-          // Skip very long lines (table borders, page rules) and very short ones
-          if (x2 - x1 >= 20 && x2 - x1 < 500) merged.push({ x1, y, x2 })
+          if (x2 - x1 >= 20) mergedLines.push({ x: x1, y: y1, w: x2 - x1 })
+          j++
         }
 
-        // Dedupe against existing mapped fields
-        const existingFields = allFieldsRef.current
+        // Lines → text blanks
+        for (const ln of mergedLines) {
+          const label = findNearestText(ln.x + ln.w / 2, ln.y - 6, pageText)?.str ?? ''
+          allBlanks.push({ label, x: ln.x, y: ln.y - 12, width: ln.w, height: 12, page: p, forceType: 'text' })
+        }
 
-        for (const line of merged) {
-          const fieldH = 12
-          const fieldY = Math.max(0, line.y - fieldH) // top of field is above the line
-          const fieldX = line.x1
-          const fieldW = line.x2 - line.x1
-
-          const overlaps = existingFields.some(
-            f => f.page_num === p &&
-              Math.abs(f.x - fieldX) < 15 &&
-              Math.abs(f.y - fieldY) < 10
-          )
-          if (overlaps) continue
-
-          // Find nearest label text
-          let bestLabel = ''
-          let bestDist = Infinity
-          for (const item of pageTextItems) {
-            const underRatio = (item.str.match(/_/g) || []).length / item.str.length
-            if (underRatio > 0.4 || item.str.trim().length < 2) continue
-            const dx = fieldX - (item.x + item.width)
-            const dy = fieldY - item.y
-            let d: number
-            if (dx >= 0 && dx < 250 && Math.abs(dy) < 15) {
-              d = dx + Math.abs(dy) * 3
-            } else if (dy >= -5 && dy < 40 && Math.abs(dx) < 100) {
-              d = Math.abs(dx) * 0.5 + dy * 2
-            } else {
-              continue
-            }
-            if (d < bestDist) { bestDist = d; bestLabel = item.str.trim() }
-          }
-
-          blanks.push({
-            label: bestLabel || '',
-            x: fieldX,
-            y: fieldY,
-            width: fieldW,
-            height: fieldH,
-            page: p,
-          })
+        // Small rects → checkboxes
+        for (const cb of checkboxes) {
+          const isDupe = allBlanks.some(b => b.page === p && Math.abs(b.x - cb.x) < 5 && Math.abs(b.y - cb.y) < 5)
+          if (isDupe) continue
+          const label = findNearestText(cb.x + cb.w / 2, cb.y + cb.h / 2, pageText)?.str ?? ''
+          allBlanks.push({ label, x: cb.x, y: cb.y, width: cb.w, height: cb.h, page: p, forceType: 'checkbox' })
         }
       }
 
-      if (blanks.length === 0) {
-        setSuggesting(false)
-        alert('No drawn-line fields detected in this PDF.\nThis form may use underscore characters for blanks — try ✨ Auto-Suggest instead.')
+      if (allBlanks.length === 0) {
+        setDetecting(false)
+        alert('No drawn lines or checkbox squares detected.\nThis PDF may use underscores — try the purple Auto-Suggest button instead.')
         return
       }
 
-      // Call GPT for field naming
+      // Dedupe against already-mapped fields
+      const filtered = allBlanks.filter(b =>
+        !allFieldsRef.current.some(f => f.page_num === b.page && Math.abs(f.x - b.x) < 12 && Math.abs(f.y - b.y) < 12)
+      )
+
+      if (filtered.length === 0) {
+        setDetecting(false)
+        setSaveStatus('All detected fields already mapped ✓')
+        setTimeout(() => setSaveStatus(''), 3000)
+        return
+      }
+
       const res = await fetch('/api/admin/field-suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blanks, formName: formInfo.name }),
+        body: JSON.stringify({ blanks: filtered, formName: formInfo.name }),
       })
       const json = await res.json()
       if (!res.ok || json.error) throw new Error(json.error || 'API error')
 
-      const suggestions: SuggestedField[] = (json.suggestions || []).map((s: any, i: number) => ({
-        ...s, id: `det_${Date.now()}_${i}`,
+      const suggestions: SuggestedField[] = (json.suggestions || []).map((s: any, idx: number) => ({
+        ...s,
+        // Override GPT type when we detected it was a checkbox/text from drawing ops
+        field_type: filtered[idx]?.forceType ?? s.field_type,
+        id: `det_${Date.now()}_${idx}`,
       }))
-      setSuggestedFields(suggestions)
+
+      setSuggestedFields(prev => [...prev, ...suggestions])
       if (suggestions.length > 0) setPageNum(suggestions[0].page_num)
     } catch (e: any) {
-      alert('Auto-detect failed: ' + e.message)
+      alert('Detection failed: ' + e.message)
     }
-    setSuggesting(false)
+    setDetecting(false)
   }
   // ─────────────────────────────────────────────────────────────
 
@@ -740,32 +710,17 @@ export default function MapperPage() {
           {/* Auto-suggest button */}
           <div className="w-px h-6 bg-gray-200 mx-1" />
           {suggestedFields.length === 0 ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={runAutoSuggest}
-                disabled={!!suggesting || !pdf}
-                title="Scan for underscore-based blank fields and suggest names via AI"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
-              >
-                {suggesting === true ? (
-                  <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
-                ) : (
-                  <><Wand2 className="w-3.5 h-3.5" />Auto-Suggest</>
-                )}
-              </button>
-              <button
-                onClick={runAutoDetect}
-                disabled={!!suggesting || !pdf}
-                title="Scan for drawn-line blank fields (horizontal rules) and suggest names via AI"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white text-xs font-bold rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors"
-              >
-                {suggesting === 'detecting' ? (
-                  <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Detecting…</>
-                ) : (
-                  <><ScanLine className="w-3.5 h-3.5" />Detect Lines</>
-                )}
-              </button>
-            </div>
+            <button
+              onClick={runAutoSuggest}
+              disabled={!!suggesting || !pdf}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
+            >
+              {suggesting === true ? (
+                <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
+              ) : (
+                <><Wand2 className="w-3.5 h-3.5" />Auto-Suggest</>
+              )}
+            </button>
           ) : (
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-violet-700 bg-violet-100 px-2 py-1 rounded-full">
@@ -789,6 +744,20 @@ export default function MapperPage() {
               </button>
             </div>
           )}
+
+
+          {/* Detect Lines + Checkboxes button */}
+          <button
+            onClick={runDetectLines}
+            disabled={detecting || !!suggesting || !pdf}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white text-xs font-bold rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors"
+          >
+            {detecting ? (
+              <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
+            ) : (
+              <><AlignJustify className="w-3.5 h-3.5" />Detect Fields</>
+            )}
+          </button>
 
           {pendingChanges.size > 0 && (
             <>
