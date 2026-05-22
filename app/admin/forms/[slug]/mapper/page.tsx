@@ -348,131 +348,57 @@ export default function MapperPage() {
   // ─────────────────────────────────────────────────────────────
 
 
-  // ── Detect Drawn Lines + Checkboxes ──────────────────────────
+  // ── Detect Drawn Lines + Checkboxes (server-side) ────────────
   const runDetectLines = async () => {
-    if (!pdf || !formInfo) return
+    if (!formInfo) return
     setDetecting(true)
-
     try {
-      const allBlanks: any[] = []
-      const totalPages = formInfo.page_count || pdf.numPages
-      const pOPS = window.pdfjsLib.OPS || {}
-      const OPS_MOVETO    = pOPS.moveTo    ?? 13
-      const OPS_LINETO    = pOPS.lineTo    ?? 14
-      const OPS_CURVETO   = pOPS.curveTo   ?? 15
-      const OPS_CURVETO2  = pOPS.curveTo2  ?? 16
-      const OPS_CURVETO3  = pOPS.curveTo3  ?? 17
-      const OPS_RECTANGLE = pOPS.rectangle ?? 20
-      const OPS_CPATH     = pOPS.constructPath ?? 91
+      // Call server-side detect route — uses pdf-lib + zlib, no PDF.js needed
+      const res = await fetch('/api/admin/detect-fields', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ form_slug: slug }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error || 'Detection failed')
 
-      for (let p = 1; p <= totalPages; p++) {
-        const page = await pdf.getPage(p)
-        const vp1 = page.getViewport({ scale: 1 })
-        const PAGE_H = vp1.height
+      const candidates: any[] = json.fields || []
 
-        // Text items for label lookup
-        const tc = await page.getTextContent()
-        const pageText: TextItem[] = (tc.items as any[])
-          .filter(i => i.str?.trim())
-          .map(i => {
-            const fs = Math.abs(i.transform[3]) || Math.abs(i.transform[0]) || 12
-            return { str: i.str as string, x: i.transform[4], y: PAGE_H - i.transform[5] - fs, width: (i.width as number) || 50, height: fs }
-          })
-
-        const ops = await page.getOperatorList()
-        const lineSegs: Array<{ x1: number; y1: number; x2: number }> = []
-        const checkboxes: Array<{ x: number; y: number; w: number; h: number }> = []
-
-        for (let i = 0; i < ops.fnArray.length; i++) {
-          if (ops.fnArray[i] !== OPS_CPATH) continue
-          const subOps: number[] = ops.argsArray[i][0]
-          const coords: number[] = ops.argsArray[i][1]
-          let ci = 0, curX = 0, curY = 0
-
-          for (const so of subOps) {
-            if (so === OPS_MOVETO) {
-              curX = coords[ci++]; curY = coords[ci++]
-            } else if (so === OPS_LINETO) {
-              const tx = coords[ci++]; const ty = coords[ci++]
-              if (Math.abs(ty - curY) < 2) {
-                const len = Math.abs(tx - curX)
-                if (len >= 20 && len <= 480)
-                  lineSegs.push({ x1: Math.min(curX, tx), y1: PAGE_H - curY, x2: Math.max(curX, tx) })
-              }
-              curX = tx; curY = ty
-            } else if (so === OPS_RECTANGLE) {
-              const rx = coords[ci++]; const ry = coords[ci++]
-              const rw = Math.abs(coords[ci++]); const rh = Math.abs(coords[ci++])
-              if (rw >= 7 && rw <= 22 && rh >= 7 && rh <= 22)
-                checkboxes.push({ x: rx, y: PAGE_H - ry - rh, w: rw, h: rh })
-            } else if (so === OPS_CURVETO) { ci += 6 }
-            else if (so === OPS_CURVETO2 || so === OPS_CURVETO3) { ci += 4 }
-          }
-        }
-
-        // Merge adjacent horizontal segments
-        lineSegs.sort((a, b) => Math.abs(a.y1 - b.y1) < 2 ? a.x1 - b.x1 : a.y1 - b.y1)
-        const mergedLines: Array<{ x: number; y: number; w: number }> = []
-        let j = 0
-        while (j < lineSegs.length) {
-          let { x1, y1, x2 } = lineSegs[j]
-          while (j + 1 < lineSegs.length && Math.abs(lineSegs[j + 1].y1 - y1) < 2 && lineSegs[j + 1].x1 <= x2 + 6) {
-            x2 = Math.max(x2, lineSegs[j + 1].x2); j++
-          }
-          if (x2 - x1 >= 20) mergedLines.push({ x: x1, y: y1, w: x2 - x1 })
-          j++
-        }
-
-        // Lines → text blanks
-        for (const ln of mergedLines) {
-          const label = findNearestText(ln.x + ln.w / 2, ln.y - 6, pageText)?.str ?? ''
-          allBlanks.push({ label, x: ln.x, y: ln.y - 12, width: ln.w, height: 12, page: p, forceType: 'text' })
-        }
-
-        // Small rects → checkboxes
-        for (const cb of checkboxes) {
-          const isDupe = allBlanks.some(b => b.page === p && Math.abs(b.x - cb.x) < 5 && Math.abs(b.y - cb.y) < 5)
-          if (isDupe) continue
-          const label = findNearestText(cb.x + cb.w / 2, cb.y + cb.h / 2, pageText)?.str ?? ''
-          allBlanks.push({ label, x: cb.x, y: cb.y, width: cb.w, height: cb.h, page: p, forceType: 'checkbox' })
-        }
-      }
-
-      if (allBlanks.length === 0) {
-        setDetecting(false)
+      if (candidates.length === 0) {
         alert('No drawn lines or checkbox squares detected.\nThis PDF may use underscores — try the purple Auto-Suggest button instead.')
+        setDetecting(false)
         return
       }
 
       // Dedupe against already-mapped fields
-      const filtered = allBlanks.filter(b =>
-        !allFieldsRef.current.some(f => f.page_num === b.page && Math.abs(f.x - b.x) < 12 && Math.abs(f.y - b.y) < 12)
+      const filtered = candidates.filter((b: any) =>
+        !allFieldsRef.current.some(f => f.page_num === b.page_num && Math.abs(f.x - b.x) < 12 && Math.abs(f.y - b.y) < 12)
       )
 
       if (filtered.length === 0) {
-        setDetecting(false)
         setSaveStatus('All detected fields already mapped ✓')
         setTimeout(() => setSaveStatus(''), 3000)
+        setDetecting(false)
         return
       }
 
-      const res = await fetch('/api/admin/field-suggest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blanks: filtered, formName: formInfo.name }),
-      })
-      const json = await res.json()
-      if (!res.ok || json.error) throw new Error(json.error || 'API error')
-
-      const suggestions: SuggestedField[] = (json.suggestions || []).map((s: any, idx: number) => ({
-        ...s,
-        // Override GPT type when we detected it was a checkbox/text from drawing ops
-        field_type: filtered[idx]?.forceType ?? s.field_type,
+      const suggestions: SuggestedField[] = filtered.map((s: any, idx: number) => ({
+        field_key: s.field_key,
+        field_type: s.field_type,
+        page_num: s.page_num,
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        label: s.label,
         id: `det_${Date.now()}_${idx}`,
       }))
 
       setSuggestedFields(prev => [...prev, ...suggestions])
       if (suggestions.length > 0) setPageNum(suggestions[0].page_num)
+
+      setSaveStatus(`✓ Detected ${filtered.length} fields (${json.lines} text, ${json.checkboxes} checkboxes)`)
+      setTimeout(() => setSaveStatus(''), 4000)
     } catch (e: any) {
       alert('Detection failed: ' + e.message)
     }
