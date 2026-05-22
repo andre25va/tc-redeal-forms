@@ -1,507 +1,531 @@
-'use client'
-import { useState, useEffect } from 'react'
-import Link from 'next/link'
-import { Upload, FileText, MapPin, Trash2, ArrowLeft, Plus, ExternalLink, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-
-declare global {
-  interface Window { pdfjsLib: any }
-}
+'use client';
+// /app/admin/forms/page.tsx
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { MLS_BOARDS } from '@/lib/formStandards';
 
 interface FormTemplate {
-  id: string
-  slug: string
-  name: string
-  page_count: number | null
-  pdf_template_path: string | null
-  is_active: boolean
-  created_at: string
-  field_count?: number
+  slug: string;
+  name: string;
+  pdf_template_path: string;
+  page_count: number;
 }
 
-function nameToSlug(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+interface FormProfile {
+  form_slug: string;
+  mls_board: string | null;
+  state: string | null;
+  document_name: string | null;
+  document_number: string | null;
+  page_count: number | null;
+  buyer_count: number;
+  seller_count: number;
+  initials_pages: number[];
+  has_broker_fields: boolean;
+  notes: string | null;
 }
 
-async function loadPdfJs(): Promise<any> {
-  if (window.pdfjsLib) return window.pdfjsLib
-  return new Promise((resolve) => {
-    const script = document.createElement('script')
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
-    script.onload = () => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-      resolve(window.pdfjsLib)
-    }
-    document.head.appendChild(script)
-  })
+const defaultProfile = (slug: string): FormProfile => ({
+  form_slug: slug,
+  mls_board: null,
+  state: null,
+  document_name: null,
+  document_number: null,
+  page_count: null,
+  buyer_count: 2,
+  seller_count: 2,
+  initials_pages: [],
+  has_broker_fields: false,
+  notes: null,
+});
+
+// ── Fill Form Modal ────────────────────────────────────────────────────────────
+function FillFormModal({ form, onClose }: { form: FormTemplate; onClose: () => void }) {
+  const [sellerName, setSellerName] = useState('');
+  const [sellerEmail, setSellerEmail] = useState('tc@myredeal.com');
+  const [address, setAddress] = useState('');
+  const [mls, setMls] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [link, setLink] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    const res = await fetch('/api/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        form_slug: form.slug,
+        seller_name: sellerName,
+        seller_email: sellerEmail,
+        property_address: address,
+        mls_number: mls,
+      }),
+    });
+    const data = await res.json();
+    setLoading(false);
+    if (data.formUrl) setLink(data.formUrl);
+    else alert(data.error || 'Failed to create invitation');
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Fill Form</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">{form.name}</p>
+
+        {link ? (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-700 font-medium">✅ Invitation created! Share this link:</p>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 break-all text-xs text-blue-600 font-mono">{link}</div>
+            <div className="flex gap-2">
+              <button onClick={() => navigator.clipboard.writeText(link)} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700">Copy Link</button>
+              <button onClick={onClose} className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-200">Close</button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Seller Name</label>
+              <input value={sellerName} onChange={e => setSellerName(e.target.value)} required className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Jane Smith" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Seller Email</label>
+              <input type="email" value={sellerEmail} onChange={e => setSellerEmail(e.target.value)} required className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Property Address</label>
+              <input value={address} onChange={e => setAddress(e.target.value)} required className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="123 Main St, Kansas City, MO" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">MLS # <span className="text-gray-400">(optional)</span></label>
+              <input value={mls} onChange={e => setMls(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="2412345" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button type="submit" disabled={loading} className="flex-1 bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                {loading ? 'Creating…' : 'Create Link'}
+              </button>
+              <button type="button" onClick={onClose} className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-200">Cancel</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
 }
 
-type UploadStep = 'idle' | 'uploading' | 'scanning' | 'done' | 'error'
+// ── Profile Modal ──────────────────────────────────────────────────────────────
+function ProfileModal({ form, onClose }: { form: FormTemplate; onClose: () => void }) {
+  const [profile, setProfile] = useState<FormProfile>(defaultProfile(form.slug));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [initialsInput, setInitialsInput] = useState('');
 
-export default function AdminFormsPage() {
-  const [forms, setForms] = useState<FormTemplate[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showUpload, setShowUpload] = useState(false)
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [formName, setFormName] = useState('')
-  const [formSlug, setFormSlug] = useState('')
-  const [pageCount, setPageCount] = useState(0)
-  const [dragOver, setDragOver] = useState(false)
-  const [fillingSlug, setFillingSlug] = useState<string | null>(null)
-  const [fillModalSlug, setFillModalSlug] = useState<string | null>(null)
-  const [fillSellerName, setFillSellerName] = useState('')
-  const [fillSellerEmail, setFillSellerEmail] = useState('')
-  const [fillAddress, setFillAddress] = useState('')
-  const [fillMls, setFillMls] = useState('')
+  useEffect(() => {
+    fetch(`/api/admin/forms/${form.slug}/profile`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.profile) {
+          setProfile(d.profile);
+          setInitialsInput((d.profile.initials_pages || []).join(', '));
+        } else {
+          // Pre-fill page count from form template
+          setProfile(p => ({ ...p, page_count: form.page_count, document_name: form.name }));
+        }
+        setLoading(false);
+      });
+  }, [form.slug, form.page_count, form.name]);
 
-  // Upload wizard state
-  const [uploadStep, setUploadStep] = useState<UploadStep>('idle')
-  const [autoMapResult, setAutoMapResult] = useState<{ fieldsFound: number; message: string } | null>(null)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [lastUploadedSlug, setLastUploadedSlug] = useState<string | null>(null)
-
-  useEffect(() => { loadForms() }, [])
-
-  const loadForms = async () => {
-    setLoading(true)
-    const { data } = await supabase
-      .from('form_templates')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    const formsWithCounts = await Promise.all(
-      (data || []).map(async (form: any) => {
-        const { count } = await supabase
-          .from('field_coordinates')
-          .select('*', { count: 'exact', head: true })
-          .eq('form_slug', form.slug)
-        return { ...form, field_count: count || 0 }
-      })
-    )
-    setForms(formsWithCounts)
-    setLoading(false)
+  function set(key: keyof FormProfile, val: unknown) {
+    setProfile(p => ({ ...p, [key]: val }));
+    setSaved(false);
   }
 
-  const handleFile = async (file: File) => {
-    if (!file.type.includes('pdf')) { alert('Please upload a PDF file'); return }
-    setUploadFile(file)
-    setUploadStep('idle')
-    setAutoMapResult(null)
-    setUploadError(null)
-    setLastUploadedSlug(null)
-    setShowUpload(true)
-    const pdfjsLib = await loadPdfJs()
-    const buf = await file.arrayBuffer()
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise
-    setPageCount(pdf.numPages)
-    const name = file.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ')
-    setFormName(name)
-    setFormSlug(nameToSlug(name))
+  function parseInitialsPages(raw: string): number[] {
+    return raw.split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && n > 0);
   }
 
-  const handleUpload = async () => {
-    if (!uploadFile || !formSlug || !formName) return
-    setUploadStep('uploading')
-    setUploadError(null)
-    setAutoMapResult(null)
-
-    try {
-      // Step 1: Upload PDF to storage
-      const path = `${formSlug}/${formSlug}.pdf`
-      const { error: storeErr } = await supabase.storage
-        .from('form-templates')
-        .upload(path, uploadFile, { upsert: true })
-      if (storeErr) throw storeErr
-
-      // Step 2: Save form template record
-      const { error: dbErr } = await supabase
-        .from('form_templates')
-        .upsert(
-          { slug: formSlug, name: formName, pdf_template_path: path, page_count: pageCount, is_active: true },
-          { onConflict: 'slug' }
-        )
-      if (dbErr) throw dbErr
-
-      setLastUploadedSlug(formSlug)
-
-      // Step 3: Auto-map AcroForm fields
-      setUploadStep('scanning')
-      const mapRes = await fetch('/api/admin/auto-map', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: formSlug }),
-      })
-      const mapData = await mapRes.json()
-
-      setAutoMapResult({
-        fieldsFound: mapData.fieldsFound ?? 0,
-        message: mapData.message || (mapData.error ? `Scan error: ${mapData.error}` : 'Scan complete'),
-      })
-      setUploadStep('done')
-      await loadForms()
-    } catch (err: any) {
-      setUploadError(err.message || 'Upload failed')
-      setUploadStep('error')
-    }
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    const payload = { ...profile, initials_pages: parseInitialsPages(initialsInput) };
+    const res = await fetch(`/api/admin/forms/${form.slug}/profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    setSaving(false);
+    if (data.profile) { setSaved(true); setProfile(data.profile); }
+    else alert(data.error || 'Save failed');
   }
 
-  const closeUpload = () => {
-    setShowUpload(false)
-    setUploadFile(null)
-    setFormName('')
-    setFormSlug('')
-    setPageCount(0)
-    setUploadStep('idle')
-    setAutoMapResult(null)
-    setUploadError(null)
-    setLastUploadedSlug(null)
+  // Auto-fill state when MLS board changes
+  function handleMlsChange(board: string) {
+    set('mls_board', board);
+    const mlsInfo = MLS_BOARDS[board];
+    if (mlsInfo?.state) set('state', mlsInfo.state);
   }
 
-  const deleteForm = async (slug: string) => {
-    if (!confirm(`Delete "${slug}" and all its field data?`)) return
-    await supabase.from('field_coordinates').delete().eq('form_slug', slug)
-    await supabase.from('pdf_ocr_lines').delete().eq('form_slug', slug)
-    await supabase.storage.from('form-templates').remove([`${slug}/${slug}.pdf`])
-    await supabase.from('form_templates').delete().eq('slug', slug)
-    await loadForms()
-  }
+  if (loading) return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-xl p-8 text-gray-500">Loading profile…</div>
+    </div>
+  );
 
-  const openFillModal = (slug: string) => {
-    setFillModalSlug(slug)
-    setFillSellerName('')
-    setFillSellerEmail('tc@myredeal.com')
-    setFillAddress('')
-    setFillMls('')
-  }
+  const allPages = profile.page_count ? Array.from({ length: profile.page_count }, (_, i) => i + 1) : [];
+  const parsedInitialsPages = parseInitialsPages(initialsInput);
 
-  const closeFillModal = () => {
-    setFillModalSlug(null)
-  }
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl my-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Form Profile</h2>
+            <p className="text-xs text-gray-500 mt-0.5">{form.name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
 
-  const fillForm = async () => {
-    if (!fillModalSlug) return
-    setFillingSlug(fillModalSlug)
-    try {
-      const res = await fetch('/api/invitations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seller_email: fillSellerEmail || 'tc@myredeal.com',
-          seller_name: fillSellerName || 'Test Fill',
-          property_address: fillAddress,
-          mls_number: fillMls,
-          form_slug: fillModalSlug,
-        }),
-      })
-      const data = await res.json()
-      if (!data.formUrl) throw new Error(data.error || 'No form URL returned')
-      window.open(data.formUrl, '_blank')
-      closeFillModal()
-    } catch (err) {
-      alert('Could not open form: ' + (err as Error).message)
-    } finally {
-      setFillingSlug(null)
-    }
-  }
+        <form onSubmit={handleSave} className="px-6 py-5 space-y-5">
+          {/* MLS + State */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">MLS Board</label>
+              <select
+                value={profile.mls_board ?? ''}
+                onChange={e => handleMlsChange(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select —</option>
+                {Object.entries(MLS_BOARDS).map(([k, v]) => (
+                  <option key={k} value={k}>{k} — {v.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">State</label>
+              <select
+                value={profile.state ?? ''}
+                onChange={e => set('state', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select —</option>
+                <option value="MO">Missouri (MO)</option>
+                <option value="KS">Kansas (KS)</option>
+                <option value="IL">Illinois (IL)</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
 
-  const isUploading = uploadStep === 'uploading' || uploadStep === 'scanning'
+          {/* Document info */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Document Name</label>
+              <input
+                value={profile.document_name ?? ''}
+                onChange={e => set('document_name', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Contract for Purchase and Sale"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Doc # / Version</label>
+              <input
+                value={profile.document_number ?? ''}
+                onChange={e => set('document_number', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="1200 Rel. 12"
+              />
+            </div>
+          </div>
+
+          {/* Pages + Party counts */}
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Pages</label>
+              <input
+                type="number" min={1} max={50}
+                value={profile.page_count ?? ''}
+                onChange={e => set('page_count', Number(e.target.value))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Buyers</label>
+              <select
+                value={profile.buyer_count}
+                onChange={e => set('buyer_count', Number(e.target.value))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+                <option value={3}>3</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Sellers</label>
+              <select
+                value={profile.seller_count}
+                onChange={e => set('seller_count', Number(e.target.value))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+                <option value={3}>3</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Initials pages */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+              Initials Pages
+              <span className="text-gray-400 font-normal ml-1">(pages where all parties initial)</span>
+            </label>
+            {allPages.length > 0 ? (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {allPages.map(p => {
+                  const active = parsedInitialsPages.includes(p);
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => {
+                        const current = parsedInitialsPages;
+                        const next = active ? current.filter(x => x !== p) : [...current, p].sort((a, b) => a - b);
+                        setInitialsInput(next.join(', '));
+                        setSaved(false);
+                      }}
+                      className={`w-9 h-9 rounded-lg text-sm font-semibold border-2 transition-colors ${
+                        active
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 mb-2">Enter page count above to see page buttons</p>
+            )}
+            <input
+              value={initialsInput}
+              onChange={e => { setInitialsInput(e.target.value); setSaved(false); }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g. 1, 2, 3, 4, 5, 6"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              {parsedInitialsPages.length > 0
+                ? `→ Will generate ${parsedInitialsPages.length * (profile.buyer_count + profile.seller_count)} initials fields (${profile.buyer_count} buyer + ${profile.seller_count} seller × ${parsedInitialsPages.length} pages)`
+                : 'Click page numbers above or type comma-separated page numbers'}
+            </p>
+          </div>
+
+          {/* Broker fields toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => set('has_broker_fields', !profile.has_broker_fields)}
+              className={`relative w-10 h-6 rounded-full transition-colors ${profile.has_broker_fields ? 'bg-indigo-600' : 'bg-gray-300'}`}
+            >
+              <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${profile.has_broker_fields ? 'translate-x-4' : ''}`} />
+            </button>
+            <span className="text-sm text-gray-700">Include broker/agent signature fields</span>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Notes</label>
+            <textarea
+              value={profile.notes ?? ''}
+              onChange={e => set('notes', e.target.value)}
+              rows={2}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              placeholder="Any special notes about this form…"
+            />
+          </div>
+
+          {/* Standard fields preview */}
+          <div className="bg-indigo-50 rounded-lg p-3">
+            <p className="text-xs font-semibold text-indigo-700 mb-1">📋 Standard fields that will be required in mapper:</p>
+            <div className="text-xs text-indigo-600 space-y-0.5">
+              <div>• {profile.buyer_count} buyer name field{profile.buyer_count > 1 ? 's' : ''} + {profile.seller_count} seller name field{profile.seller_count > 1 ? 's' : ''} + property address (page 1)</div>
+              {parsedInitialsPages.length > 0 && (
+                <div>• {profile.buyer_count + profile.seller_count} initials fields × {parsedInitialsPages.length} pages = {parsedInitialsPages.length * (profile.buyer_count + profile.seller_count)} total initials fields</div>
+              )}
+              {profile.page_count && (
+                <div>• {profile.buyer_count} buyer signature{profile.buyer_count > 1 ? 's' : ''} + {profile.seller_count} seller signature{profile.seller_count > 1 ? 's' : ''} (page {profile.page_count})</div>
+              )}
+              {profile.has_broker_fields && <div>• 4 broker/agent fields</div>}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : saved ? '✓ Saved' : 'Save Profile'}
+            </button>
+            <button type="button" onClick={onClose} className="px-4 bg-gray-100 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-200">
+              Close
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+export default function FormsPage() {
+  const [forms, setForms] = useState<FormTemplate[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, FormProfile>>({});
+  const [fillForm, setFillForm] = useState<FormTemplate | null>(null);
+  const [profileForm, setProfileForm] = useState<FormTemplate | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/admin/forms')
+      .then(r => r.json())
+      .then(async d => {
+        const formList: FormTemplate[] = d.forms ?? [];
+        setForms(formList);
+
+        // Load all profiles in parallel
+        const profileResults = await Promise.all(
+          formList.map(f =>
+            fetch(`/api/admin/forms/${f.slug}/profile`).then(r => r.json())
+          )
+        );
+        const profileMap: Record<string, FormProfile> = {};
+        formList.forEach((f, i) => {
+          if (profileResults[i]?.profile) profileMap[f.slug] = profileResults[i].profile;
+        });
+        setProfiles(profileMap);
+        setLoading(false);
+      });
+  }, []);
+
+  function refreshProfile(slug: string) {
+    fetch(`/api/admin/forms/${slug}/profile`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.profile) setProfiles(p => ({ ...p, [slug]: d.profile }));
+      });
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-100 shadow-sm">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/admin" className="p-1.5 hover:bg-gray-100 rounded-lg">
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
-            </Link>
-            <div>
-              <h1 className="text-lg font-bold text-gray-900">Form Templates</h1>
-              <p className="text-xs text-gray-400">Upload PDFs, map fields, build forms</p>
-            </div>
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Forms Manager</h1>
+            <p className="text-sm text-gray-500 mt-1">Manage PDF form templates, profiles, and field mappings</p>
           </div>
-          <label className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-md cursor-pointer transition-all">
-            <Plus className="w-4 h-4" /> Upload PDF
-            <input type="file" accept=".pdf" className="hidden"
-              onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
-          </label>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        <div
-          className={`border-2 border-dashed rounded-2xl p-8 mb-6 text-center transition-all
-            ${dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white'}`}
-          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={e => { e.preventDefault(); setDragOver(false); e.dataTransfer.files?.[0] && handleFile(e.dataTransfer.files[0]) }}
-        >
-          <Upload className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-sm text-gray-500">Drag &amp; drop a PDF here, or click Upload above</p>
+          <Link href="/admin" className="text-sm text-gray-500 hover:text-gray-700">← Admin</Link>
         </div>
 
         {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto" />
-          </div>
-        ) : forms.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
-            <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No forms yet. Upload a PDF to get started.</p>
-          </div>
+          <div className="text-gray-400 text-center py-20">Loading forms…</div>
         ) : (
-          <div className="grid gap-4">
-            {forms.map(form => (
-              <div key={form.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
-                <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center">
-                  <FileText className="w-6 h-6 text-indigo-500" />
+          <div className="space-y-4">
+            {forms.map(form => {
+              const prof = profiles[form.slug];
+              const hasProfile = !!prof;
+              return (
+                <div key={form.slug} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    {/* Form info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base font-semibold text-gray-900 truncate">{form.name}</h2>
+                        {hasProfile && prof.mls_board && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">{prof.mls_board}</span>
+                        )}
+                        {hasProfile && prof.state && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">{prof.state}</span>
+                        )}
+                        {!hasProfile && (
+                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">⚠ No profile</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1 font-mono">{form.slug}</p>
+
+                      {/* Profile summary row */}
+                      {hasProfile && (
+                        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+                          {prof.document_number && <span>📄 {prof.document_number}</span>}
+                          {prof.page_count && <span>📃 {prof.page_count} pages</span>}
+                          <span>👥 {prof.buyer_count} buyer{prof.buyer_count > 1 ? 's' : ''} / {prof.seller_count} seller{prof.seller_count > 1 ? 's' : ''}</span>
+                          {prof.initials_pages.length > 0 && (
+                            <span>✍️ Initials: pp. {prof.initials_pages.join(', ')}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button
+                        onClick={() => setProfileForm(form)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          hasProfile
+                            ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                            : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                        }`}
+                      >
+                        {hasProfile ? '📋 Profile' : '📋 Add Profile'}
+                      </button>
+                      <Link
+                        href={`/admin/forms/${form.slug}/mapper`}
+                        className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg text-xs font-medium"
+                      >
+                        🗺 Mapper
+                      </Link>
+                      <Link
+                        href={`/admin/forms/${form.slug}/compare`}
+                        className="px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-xs font-medium"
+                      >
+                        ⚖ Compare
+                      </Link>
+                      <button
+                        onClick={() => setFillForm(form)}
+                        className="px-3 py-1.5 bg-green-600 text-white hover:bg-green-700 rounded-lg text-xs font-medium"
+                      >
+                        ✉ Fill Form
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-gray-900 text-sm">{form.name}</h3>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {form.slug} · {form.page_count || '?'} pages · {form.field_count || 0} fields
-                  </p>
-                </div>
-                <button
-                  onClick={() => openFillModal(form.slug)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Fill Form
-                </button>
-                <Link
-                  href={`/admin/forms/${form.slug}/mapper`}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-                >
-                  <MapPin className="w-4 h-4 text-indigo-500" /> Map Fields
-                </Link>
-                <button
-                  onClick={() => deleteForm(form.slug)}
-                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
-      </main>
+      </div>
 
-      {showUpload && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <h2 className="font-bold text-gray-900 text-lg mb-4">New Form Template</h2>
-
-            <div className="bg-indigo-50 rounded-xl p-3 mb-4 flex items-center gap-3">
-              <FileText className="w-8 h-8 text-indigo-500 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-gray-900">{uploadFile?.name}</p>
-                <p className="text-xs text-gray-500">{pageCount} pages</p>
-              </div>
-            </div>
-
-            {/* Progress steps */}
-            {uploadStep !== 'idle' && (
-              <div className="mb-4 space-y-2">
-                {/* Step 1: Upload */}
-                <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm
-                  ${uploadStep === 'uploading' ? 'bg-indigo-50 text-indigo-700' :
-                    uploadStep === 'error' ? 'bg-red-50 text-red-600' :
-                    'bg-gray-50 text-gray-500'}`}>
-                  {uploadStep === 'uploading' ? (
-                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  ) : uploadStep === 'error' ? (
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                  ) : (
-                    <CheckCircle className="w-4 h-4 shrink-0 text-emerald-500" />
-                  )}
-                  <span className="font-medium">
-                    {uploadStep === 'uploading' ? 'Uploading PDF...' : 'PDF uploaded'}
-                  </span>
-                </div>
-
-                {/* Step 2: Scanning */}
-                {(uploadStep === 'scanning' || uploadStep === 'done') && (
-                  <div className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm
-                    ${uploadStep === 'scanning' ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-50 text-gray-500'}`}>
-                    {uploadStep === 'scanning' ? (
-                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                    ) : (
-                      <CheckCircle className={`w-4 h-4 shrink-0 ${(autoMapResult?.fieldsFound ?? 0) > 0 ? 'text-emerald-500' : 'text-amber-500'}`} />
-                    )}
-                    <span className="font-medium">
-                      {uploadStep === 'scanning' ? 'Scanning for AcroForm fields...' : 'Scan complete'}
-                    </span>
-                  </div>
-                )}
-
-                {/* Result */}
-                {uploadStep === 'done' && autoMapResult && (
-                  <div className={`rounded-xl px-4 py-3 text-sm font-medium mt-1
-                    ${autoMapResult.fieldsFound > 0
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                    {autoMapResult.fieldsFound > 0 ? (
-                      <span>✓ {autoMapResult.fieldsFound} fields auto-mapped! Open the mapper to review and rename.</span>
-                    ) : (
-                      <span>⚠ {autoMapResult.message}</span>
-                    )}
-                  </div>
-                )}
-
-                {uploadStep === 'error' && uploadError && (
-                  <div className="rounded-xl px-4 py-3 text-sm font-medium bg-red-50 text-red-700 border border-red-200">
-                    ✗ {uploadError}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Form fields — only show before upload starts */}
-            {uploadStep === 'idle' && (
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Form Name</label>
-                  <input type="text" value={formName}
-                    onChange={e => { setFormName(e.target.value); setFormSlug(nameToSlug(e.target.value)) }}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Slug (URL-safe)</label>
-                  <input type="text" value={formSlug}
-                    onChange={e => setFormSlug(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3 mt-5">
-              {uploadStep === 'done' ? (
-                <>
-                  <button onClick={closeUpload}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50">
-                    Close
-                  </button>
-                  {lastUploadedSlug && (
-                    <Link href={`/admin/forms/${lastUploadedSlug}/mapper`}
-                      onClick={closeUpload}
-                      className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold text-center">
-                      Open Mapper →
-                    </Link>
-                  )}
-                </>
-              ) : uploadStep === 'error' ? (
-                <>
-                  <button onClick={closeUpload}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50">
-                    Close
-                  </button>
-                  <button onClick={() => { setUploadStep('idle'); setUploadError(null) }}
-                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold">
-                    Try Again
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={closeUpload}
-                    disabled={isUploading}
-                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleUpload}
-                    disabled={isUploading || !formSlug || !formName}
-                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-50">
-                    {isUploading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {uploadStep === 'uploading' ? 'Uploading...' : 'Scanning...'}
-                      </span>
-                    ) : 'Create Form'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      {fillForm && <FillFormModal form={fillForm} onClose={() => setFillForm(null)} />}
+      {profileForm && (
+        <ProfileModal
+          form={profileForm}
+          onClose={() => {
+            refreshProfile(profileForm.slug);
+            setProfileForm(null);
+          }}
+        />
       )}
-      {/* Fill Form Modal */}
-      {fillModalSlug && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <h2 className="font-bold text-gray-900 text-lg mb-1">Send Form to Seller</h2>
-            <p className="text-xs text-gray-400 mb-5">A unique link will be created and opened in a new tab.</p>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Seller Name</label>
-                <input
-                  type="text"
-                  placeholder="Jane Smith"
-                  value={fillSellerName}
-                  onChange={e => setFillSellerName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Seller Email</label>
-                <input
-                  type="email"
-                  placeholder="seller@email.com"
-                  value={fillSellerEmail}
-                  onChange={e => setFillSellerEmail(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Property Address</label>
-                <input
-                  type="text"
-                  placeholder="123 Main St, Kansas City, MO 64101"
-                  value={fillAddress}
-                  onChange={e => setFillAddress(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">MLS # <span className="text-gray-400 font-normal">(optional)</span></label>
-                <input
-                  type="text"
-                  placeholder="e.g. 2412345"
-                  value={fillMls}
-                  onChange={e => setFillMls(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={closeFillModal}
-                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={fillForm}
-                disabled={fillingSlug === fillModalSlug}
-                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {fillingSlug === fillModalSlug
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening...</>
-                  : <><ExternalLink className="w-4 h-4" /> Open Form</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
-  )
+  );
 }
