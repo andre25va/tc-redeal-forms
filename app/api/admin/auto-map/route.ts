@@ -102,21 +102,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ fieldsFound: 0, message: 'No AcroForm fields found — use Map Fields manually.' })
   }
 
-  // 4. Build annotation ref → page index
+  // 4. Build widget dict → page index map
+  //
+  // KEY FIX: Some PDFs embed annotations as direct PDFDict objects (not indirect
+  // PDFRef) in the Annots array. The old approach only stored PDFRef entries in
+  // refToPage, so direct-object widgets were never found and all defaulted to
+  // page 0. Now we resolve every annotation to its PDFDict and use dict identity.
   const pages = pdfDoc.getPages()
-  const refToPage = new Map<string, number>()
+  const dictToPage = new Map<PDFDict, number>()
+
   for (let i = 0; i < pages.length; i++) {
     try {
-      const annots = pages[i].node.lookup(PDFName.of('Annots'))
-      if (annots instanceof PDFArray) {
-        for (let j = 0; j < annots.size(); j++) {
-          const entry = annots.get(j)
+      const annotsRaw = pages[i].node.lookup(PDFName.of('Annots'))
+      if (!(annotsRaw instanceof PDFArray)) continue
+      for (let j = 0; j < annotsRaw.size(); j++) {
+        const entry = annotsRaw.get(j)
+        try {
+          let dict: unknown
           if (entry instanceof PDFRef) {
-            refToPage.set(`${entry.objectNumber}:${entry.generationNumber}`, i)
+            // Indirect object — resolve it
+            dict = pdfDoc.context.lookup(entry)
+          } else {
+            // Direct object — use as-is
+            dict = entry
           }
-        }
+          if (dict instanceof PDFDict) {
+            dictToPage.set(dict, i)
+          }
+        } catch { /* skip this annot */ }
       }
-    } catch { /* skip page */ }
+    } catch { /* skip this page */ }
   }
 
   // 5. Extract coordinates — every step guarded
@@ -136,12 +151,11 @@ export async function POST(req: NextRequest) {
       const rect = safeRect(widget)
       if (!rect) continue
 
-      // Find page via widget ref
+      // Find page via dict identity (works for both direct and indirect annots)
       let pageIndex = 0
       try {
-        const ref = (widget as any).ref
-        if (ref instanceof PDFRef) {
-          pageIndex = refToPage.get(`${ref.objectNumber}:${ref.generationNumber}`) ?? 0
+        if (widget?.dict instanceof PDFDict) {
+          pageIndex = dictToPage.get(widget.dict) ?? 0
         }
       } catch { /* default page 0 */ }
 
