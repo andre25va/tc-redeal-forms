@@ -7,6 +7,7 @@ import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
   CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, AlignJustify, Calendar, Binary } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
+import { getStandardFields, groupStandardFields, type FormProfile } from '@/lib/formStandards'
 
 declare global { interface Window { pdfjsLib: any } }
 
@@ -99,6 +100,8 @@ export default function MapperPage() {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState('')
   const [, forceUpdate] = useState(0)
+  const [profile, setProfile] = useState<FormProfile | null>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
   const rerender = () => forceUpdate(n => n + 1)
 
   const svgRef = useRef<SVGSVGElement>(null)
@@ -124,6 +127,10 @@ export default function MapperPage() {
     if (!slug) return
     supabase.from('form_templates').select('slug,name,page_count,pdf_template_path')
       .eq('slug', slug).single().then(({ data }) => { if (data) setFormInfo(data as FormInfo) })
+    fetch(`/api/admin/forms/${slug}/profile`).then(r => r.json()).then(d => {
+      setProfile(d.profile ?? null)
+      setProfileLoading(false)
+    })
     supabase.from('field_coordinates').select('*').eq('form_slug', slug)
       .order('page_num').order('y')
       .then(({ data }) => { if (data) setAllFields(data as Field[]) })
@@ -869,6 +876,16 @@ export default function MapperPage() {
 
           {/* Sidebar */}
           <div className="w-72 bg-white border-l border-gray-200 flex flex-col overflow-hidden flex-shrink-0">
+            {/* Standard Fields Checklist */}
+            {!profileLoading && (
+              <StandardFieldsPanel
+                profile={profile}
+                mappedFields={allFields}
+                slug={slug}
+                onNavigateToPage={p => setPageNum(p)}
+              />
+            )}
+
             <div className="p-3 border-b border-gray-100">
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-gray-400" />
@@ -933,6 +950,103 @@ export default function MapperPage() {
     </>
   )
 }
+
+// ── Standard Fields Panel (inline) ────────────────────────────────────────────
+const GROUP_LABELS_STD: Record<string, string> = {
+  parties: '👥 Parties',
+  initials: '✍️ Initials',
+  signatures: '🖊 Signatures',
+  broker: '🏢 Broker',
+}
+const GROUP_ORDER_STD = ['parties', 'initials', 'signatures', 'broker']
+
+function StandardFieldsPanel({ profile, mappedFields, slug, onNavigateToPage }: {
+  profile: FormProfile | null
+  mappedFields: { field_key: string; page_num: number }[]
+  slug: string
+  onNavigateToPage?: (page: number) => void
+}) {
+  const [collapsed, setCollapsed] = useState(true)
+
+  if (!profile) return (
+    <div className="mx-3 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-700">
+      <strong>No profile set.</strong> Go to Forms Manager → 📋 Profile to configure buyer/seller counts and initials pages.
+    </div>
+  )
+
+  const standardFields = getStandardFields(profile)
+  const grouped = groupStandardFields(standardFields)
+  const mappedKeys = new Set(mappedFields.map(f => f.field_key))
+  const missingCount = standardFields.filter(f => !mappedKeys.has(f.key)).length
+  const totalCount = standardFields.length
+
+  return (
+    <div className="border-b border-gray-200">
+      <button
+        className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+        onClick={() => setCollapsed(c => !c)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-700">📋 Standard Fields</span>
+          {missingCount > 0 ? (
+            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold">
+              {missingCount} missing
+            </span>
+          ) : (
+            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-bold">
+              ✓ All {totalCount}
+            </span>
+          )}
+        </div>
+        <span className="text-gray-400 text-[10px]">{collapsed ? '▼' : '▲'}</span>
+      </button>
+
+      {!collapsed && (
+        <div className="px-3 py-2 space-y-3 bg-white">
+          {/* Profile badges */}
+          <div className="flex flex-wrap gap-1">
+            {profile.mls_board && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">{profile.mls_board}</span>}
+            {profile.state && <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">{profile.state}</span>}
+            {profile.document_number && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{profile.document_number}</span>}
+            <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{profile.buyer_count}B / {profile.seller_count}S</span>
+          </div>
+          {/* Field groups */}
+          {GROUP_ORDER_STD.filter(g => grouped[g]?.length > 0).map(group => (
+            <div key={group}>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1">{GROUP_LABELS_STD[group]}</p>
+              <div className="space-y-0.5">
+                {grouped[group].map((field: ReturnType<typeof getStandardFields>[0]) => {
+                  const mapped = mappedKeys.has(field.key)
+                  return (
+                    <div key={field.key}
+                      className={`flex items-center justify-between px-2 py-1 rounded text-[10px] font-mono ${
+                        mapped ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1 truncate">
+                        <span>{mapped ? '✓' : '○'}</span>
+                        <span className="truncate">{field.key}</span>
+                      </span>
+                      <span className="flex items-center gap-1 shrink-0 ml-1">
+                        <span className="text-gray-400">p{field.page}</span>
+                        {!mapped && onNavigateToPage && (
+                          <button onClick={() => onNavigateToPage(field.page)}
+                            className="text-amber-600 hover:text-amber-800 underline text-[10px]">go</button>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 function FieldModal({ field, saving, onSave, onCancel, onDelete }: {
   field: Field; saving: boolean
