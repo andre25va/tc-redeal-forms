@@ -345,47 +345,60 @@ export async function POST(req: NextRequest) {
     for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
       const pageNum = pageIdx + 1
       const page = pdfDoc.getPage(pageIdx)
-      const { height: pageH } = page.getSize()
+      let pageH = 792
+      try { const sz = page.getSize(); pageH = sz.height } catch { pageH = 792 }
 
-      // Get content stream
-      const contentsRef = page.node.get(PDFName.of('Contents'))
+      // Get content stream — defensive: some pages inherit MediaBox from parent
+      let contentsRef: any
+      try { contentsRef = page.node.get(PDFName.of('Contents')) } catch { contentsRef = null }
       const contentStr = resolveContents(pdfDoc, contentsRef)
       if (!contentStr) continue
 
-      const tokens = tokenize(contentStr)
-      const { lines, checkboxes } = parseDrawingOps(tokens, pageH)
+      let lines: DrawResult['lines'] = [], checkboxes: DrawResult['checkboxes'] = []
+      try {
+        const tokens = tokenize(contentStr)
+        const result = parseDrawingOps(tokens, pageH)
+        lines = result.lines
+        checkboxes = result.checkboxes
+      } catch (parseErr) {
+        console.error(`Page ${pageNum} parse error:`, parseErr)
+      }
 
       // Filter long table borders (> 490pt wide)
       const filteredLines = lines.filter(ln => ln.width <= 490)
 
       for (const ln of filteredLines) {
-        const label = findLabel(ln.x + ln.width / 2, ln.y, pageNum)
-        const key = toSnakeCase(label, 'text', usedKeys)
-        allFields.push({
-          field_key: key,
-          field_type: 'text',
-          page_num: pageNum,
-          x: Math.round(ln.x * 100) / 100,
-          y: Math.round(ln.y * 100) / 100,
-          width: Math.round(ln.width * 100) / 100,
-          height: 12,
-          label,
-        })
+        try {
+          const label = findLabel(ln.x + ln.width / 2, ln.y, pageNum)
+          const key = toSnakeCase(label, 'text', usedKeys)
+          allFields.push({
+            field_key: key,
+            field_type: 'text',
+            page_num: pageNum,
+            x: Math.round(ln.x * 100) / 100,
+            y: Math.round(ln.y * 100) / 100,
+            width: Math.round(ln.width * 100) / 100,
+            height: 12,
+            label,
+          })
+        } catch { /* skip bad field */ }
       }
 
       for (const cb of checkboxes) {
-        const label = findLabel(cb.x + cb.width, cb.y + cb.height / 2, pageNum)
-        const key = toSnakeCase(label, 'checkbox', usedKeys)
-        allFields.push({
-          field_key: key,
-          field_type: 'checkbox',
-          page_num: pageNum,
-          x: Math.round(cb.x * 100) / 100,
-          y: Math.round(cb.y * 100) / 100,
-          width: Math.round(cb.width * 100) / 100,
-          height: Math.round(cb.height * 100) / 100,
-          label,
-        })
+        try {
+          const label = findLabel(cb.x + cb.width, cb.y + cb.height / 2, pageNum)
+          const key = toSnakeCase(label, 'checkbox', usedKeys)
+          allFields.push({
+            field_key: key,
+            field_type: 'checkbox',
+            page_num: pageNum,
+            x: Math.round(cb.x * 100) / 100,
+            y: Math.round(cb.y * 100) / 100,
+            width: Math.round(cb.width * 100) / 100,
+            height: Math.round(cb.height * 100) / 100,
+            label,
+          })
+        } catch { /* skip bad field */ }
       }
     }
 
@@ -398,6 +411,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (e: any) {
     console.error('detect-fields error', e)
-    return NextResponse.json({ error: e.message }, { status: 500 })
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 })
   }
 }
