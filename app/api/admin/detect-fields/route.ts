@@ -297,7 +297,8 @@ export async function POST(req: NextRequest) {
 
     const pdfBytes = new Uint8Array(await pdfBlob.arrayBuffer())
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true })
-    const pageCount = pdfDoc.getPageCount()
+    let pageCount = 0
+    try { pageCount = pdfDoc.getPageCount() } catch { pageCount = 0 }
 
     // 3. Extract OCR text from Supabase (already stored)
     const { data: ocrRows } = await supabase
@@ -344,9 +345,14 @@ export async function POST(req: NextRequest) {
 
     for (let pageIdx = 0; pageIdx < pageCount; pageIdx++) {
       const pageNum = pageIdx + 1
-      const page = pdfDoc.getPage(pageIdx)
-      let pageH = 792
-      try { const sz = page.getSize(); pageH = sz.height } catch { pageH = 792 }
+      let page: any, pageH = 792
+      try {
+        page = pdfDoc.getPage(pageIdx)
+        try { pageH = page.getSize().height } catch { pageH = 792 }
+      } catch (pgErr) {
+        console.error(`Page ${pageNum} load error:`, pgErr)
+        continue
+      }
 
       // Get content stream — defensive: some pages inherit MediaBox from parent
       let contentsRef: any
