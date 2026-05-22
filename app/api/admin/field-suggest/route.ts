@@ -6,10 +6,10 @@ export async function POST(req: NextRequest) {
     if (!blanks?.length) return NextResponse.json({ suggestions: [] })
 
     // Dedupe very close blanks (within 5pt of each other on same page)
-    const deduped: typeof blanks = []
+    const deduped: any[] = []
     for (const b of blanks) {
       const dup = deduped.find(
-        d => d.page === b.page && Math.abs(d.x - b.x) < 5 && Math.abs(d.y - b.y) < 5
+        (d: any) => d.page === b.page && Math.abs(d.x - b.x) < 5 && Math.abs(d.y - b.y) < 5
       )
       if (!dup) deduped.push(b)
     }
