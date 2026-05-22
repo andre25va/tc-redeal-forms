@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, ScanLine } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -346,6 +346,170 @@ export default function MapperPage() {
   }
   // ─────────────────────────────────────────────────────────────
 
+
+  // ── Auto-detect (drawn lines) ────────────────────────────────
+  const runAutoDetect = async () => {
+    if (!pdf || !formInfo) return
+    setSuggesting('detecting')
+
+    try {
+      const blanks: any[] = []
+      const totalPages = formInfo.page_count || pdf.numPages
+      const PDFOPS = (window as any).pdfjsLib.OPS
+
+      for (let p = 1; p <= totalPages; p++) {
+        const page = await pdf.getPage(p)
+        const vp1 = page.getViewport({ scale: 1 })
+        const H = vp1.height
+
+        // Get text items for label matching
+        const tc = await page.getTextContent()
+        const pageTextItems = (tc.items as any[])
+          .filter((i: any) => i.str?.trim())
+          .map((i: any) => {
+            const fontSize = Math.abs(i.transform[3]) || Math.abs(i.transform[0]) || 12
+            return {
+              str: i.str as string,
+              x: i.transform[4] as number,
+              y: H - i.transform[5] - fontSize,
+              width: (i.width as number) || 50,
+              height: fontSize,
+            }
+          })
+
+        // Scan operator list for horizontal line segments
+        const opList = await page.getOperatorList()
+        const rawLines: Array<{ x1: number; y: number; x2: number }> = []
+
+        for (let i = 0; i < opList.fnArray.length; i++) {
+          if (opList.fnArray[i] === PDFOPS.constructPath) {
+            const [pathOps, pathArgs] = opList.argsArray[i]
+            let argIdx = 0
+            let curX = 0, curY = 0
+
+            for (let j = 0; j < pathOps.length; j++) {
+              const op = pathOps[j]
+              if (op === PDFOPS.moveTo) {
+                curX = pathArgs[argIdx++]
+                curY = pathArgs[argIdx++]
+              } else if (op === PDFOPS.lineTo) {
+                const toX = pathArgs[argIdx++]
+                const toY = pathArgs[argIdx++]
+                // Horizontal line: y delta < 2pt, width > 20pt
+                if (Math.abs(toY - curY) < 2 && Math.abs(toX - curX) > 20) {
+                  rawLines.push({
+                    x1: Math.min(curX, toX),
+                    y: H - curY, // convert PDF coords (bottom-up) → screen-space (top-down)
+                    x2: Math.max(curX, toX),
+                  })
+                }
+                curX = toX; curY = toY
+              } else if (op === PDFOPS.curveTo) {
+                argIdx += 6
+              } else if (op === PDFOPS.curveTo2 || op === PDFOPS.curveTo3) {
+                argIdx += 4
+              } else if (op === PDFOPS.rectangle) {
+                argIdx += 4
+              }
+              // closePath, stroke, fill etc — no args consumed
+            }
+          }
+        }
+
+        if (rawLines.length === 0) continue
+
+        // Merge adjacent/overlapping lines at the same y (±2pt)
+        const used = new Set<number>()
+        const merged: typeof rawLines = []
+        for (let i = 0; i < rawLines.length; i++) {
+          if (used.has(i)) continue
+          let { x1, y, x2 } = rawLines[i]
+          for (let j = i + 1; j < rawLines.length; j++) {
+            if (used.has(j)) continue
+            const b = rawLines[j]
+            if (Math.abs(b.y - y) < 3 && b.x1 <= x2 + 5 && b.x2 >= x1 - 5) {
+              x1 = Math.min(x1, b.x1); x2 = Math.max(x2, b.x2)
+              used.add(j)
+            }
+          }
+          used.add(i)
+          // Skip very long lines (table borders, page rules) and very short ones
+          if (x2 - x1 >= 20 && x2 - x1 < 500) merged.push({ x1, y, x2 })
+        }
+
+        // Dedupe against existing mapped fields
+        const existingFields = allFieldsRef.current
+
+        for (const line of merged) {
+          const fieldH = 12
+          const fieldY = Math.max(0, line.y - fieldH) // top of field is above the line
+          const fieldX = line.x1
+          const fieldW = line.x2 - line.x1
+
+          const overlaps = existingFields.some(
+            f => f.page_num === p &&
+              Math.abs(f.x - fieldX) < 15 &&
+              Math.abs(f.y - fieldY) < 10
+          )
+          if (overlaps) continue
+
+          // Find nearest label text
+          let bestLabel = ''
+          let bestDist = Infinity
+          for (const item of pageTextItems) {
+            const underRatio = (item.str.match(/_/g) || []).length / item.str.length
+            if (underRatio > 0.4 || item.str.trim().length < 2) continue
+            const dx = fieldX - (item.x + item.width)
+            const dy = fieldY - item.y
+            let d: number
+            if (dx >= 0 && dx < 250 && Math.abs(dy) < 15) {
+              d = dx + Math.abs(dy) * 3
+            } else if (dy >= -5 && dy < 40 && Math.abs(dx) < 100) {
+              d = Math.abs(dx) * 0.5 + dy * 2
+            } else {
+              continue
+            }
+            if (d < bestDist) { bestDist = d; bestLabel = item.str.trim() }
+          }
+
+          blanks.push({
+            label: bestLabel || '',
+            x: fieldX,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            page: p,
+          })
+        }
+      }
+
+      if (blanks.length === 0) {
+        setSuggesting(false)
+        alert('No drawn-line fields detected in this PDF.\nThis form may use underscore characters for blanks — try ✨ Auto-Suggest instead.')
+        return
+      }
+
+      // Call GPT for field naming
+      const res = await fetch('/api/admin/field-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blanks, formName: formInfo.name }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error || 'API error')
+
+      const suggestions: SuggestedField[] = (json.suggestions || []).map((s: any, i: number) => ({
+        ...s, id: `det_${Date.now()}_${i}`,
+      }))
+      setSuggestedFields(suggestions)
+      if (suggestions.length > 0) setPageNum(suggestions[0].page_num)
+    } catch (e: any) {
+      alert('Auto-detect failed: ' + e.message)
+    }
+    setSuggesting(false)
+  }
+  // ─────────────────────────────────────────────────────────────
+
   const getSvgXY = (e: React.MouseEvent) => {
     if (!svgRef.current) return { x: 0, y: 0 }
     const r = svgRef.current.getBoundingClientRect()
@@ -576,17 +740,32 @@ export default function MapperPage() {
           {/* Auto-suggest button */}
           <div className="w-px h-6 bg-gray-200 mx-1" />
           {suggestedFields.length === 0 ? (
-            <button
-              onClick={runAutoSuggest}
-              disabled={!!suggesting || !pdf}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
-            >
-              {suggesting === true ? (
-                <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
-              ) : (
-                <><Wand2 className="w-3.5 h-3.5" />Auto-Suggest</>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={runAutoSuggest}
+                disabled={!!suggesting || !pdf}
+                title="Scan for underscore-based blank fields and suggest names via AI"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
+              >
+                {suggesting === true ? (
+                  <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Scanning…</>
+                ) : (
+                  <><Wand2 className="w-3.5 h-3.5" />Auto-Suggest</>
+                )}
+              </button>
+              <button
+                onClick={runAutoDetect}
+                disabled={!!suggesting || !pdf}
+                title="Scan for drawn-line blank fields (horizontal rules) and suggest names via AI"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white text-xs font-bold rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors"
+              >
+                {suggesting === 'detecting' ? (
+                  <><span className="animate-spin w-3.5 h-3.5 border border-white border-t-transparent rounded-full" />Detecting…</>
+                ) : (
+                  <><ScanLine className="w-3.5 h-3.5" />Detect Lines</>
+                )}
+              </button>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-bold text-violet-700 bg-violet-100 px-2 py-1 rounded-full">
