@@ -453,7 +453,7 @@ function splitCompoundLine(
 
   // Build split points: start of each divider text
   const splitPoints = dividers.map(d => d.x)
-  const segments: typeof [line] = []
+  const segments: Array<{ x: number; y: number; width: number; height: number }> = []
   let currentX = line.x
 
   for (const sp of splitPoints) {
