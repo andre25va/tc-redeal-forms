@@ -194,8 +194,20 @@ function parseDrawingOps(tokens: string[], pageH: number): DrawResult {
           const [tx, ty] = applyCtm(rx, ry)
           const [tx2, ty2] = applyCtm(rx + rw, ry + rh)
           const aw = Math.abs(tx2 - tx), ah = Math.abs(ty2 - ty)
+          // Checkbox: small square
           if (aw >= 6 && aw <= 22 && ah >= 6 && ah <= 22) {
             checkboxes.push({ x: Math.min(tx, tx2), y: pageH - Math.max(ty, ty2), width: aw, height: ah })
+          }
+          // Thin filled rect = drawn field line (this PDF uses re f, not m l S)
+          // Height ≤ 2pt and width ≥ 18pt → treat as horizontal field line
+          if (ah <= 2.5 && aw >= 18 && aw <= 560) {
+            const lineY = Math.min(ty, ty2) // PDF space y (from bottom)
+            lines.push({
+              x: Math.min(tx, tx2),
+              y: pageH - lineY - 12, // screen-space, field top = 12pt above line
+              width: aw,
+              height: 12,
+            })
           }
           const bx = Math.min(tx, tx2), by = Math.min(ty, ty2)
           pathSegs.push(
@@ -208,7 +220,7 @@ function parseDrawingOps(tokens: string[], pageH: number): DrawResult {
         stack.length = 0; break
       }
       case 'S': case 's': flushPath(true); stack.length = 0; break
-      case 'f': case 'F': case 'f*': flushPath(false); stack.length = 0; break
+      case 'f': case 'F': case 'f*': flushPath(true); stack.length = 0; break  // also flush stroke paths on fill
       case 'B': case 'B*': case 'b': case 'b*': flushPath(true); stack.length = 0; break
       case 'n': flushPath(false); stack.length = 0; break
       case 'BT': case 'ET': stack.length = 0; break
