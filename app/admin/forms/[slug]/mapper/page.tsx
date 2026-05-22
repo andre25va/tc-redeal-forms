@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
 import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, AlignJustify } from 'lucide-react'
+  CheckSquare, Type, PenTool, Hash, Edit3, Trash2, Search, Save, Eye, Columns, Wand2, Check, X, AlignJustify, Calendar, Binary } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
 declare global { interface Window { pdfjsLib: any } }
@@ -32,13 +32,17 @@ interface FormInfo { slug: string; name: string; page_count: number; pdf_templat
 const PRESETS: Record<string, { width: number; height: number }> = {
   checkbox: { width: 10, height: 10 }, text: { width: 96, height: 14 },
   signature: { width: 140, height: 28 }, initial: { width: 40, height: 22 },
+  number: { width: 72, height: 14 }, date: { width: 80, height: 14 },
 }
 const TYPE_COLORS: Record<string, string> = {
   checkbox: '#22c55e', text: '#3b82f6', signature: '#8b5cf6', initial: '#f59e0b',
+  number: '#ef4444', date: '#06b6d4',
 }
 const DRAW_TYPES = [
   { type: 'checkbox', icon: CheckSquare, label: 'Check' },
   { type: 'text', icon: Type, label: 'Text' },
+  { type: 'number', icon: Binary, label: 'Num' },
+  { type: 'date', icon: Calendar, label: 'Date' },
   { type: 'signature', icon: PenTool, label: 'Sig' },
   { type: 'initial', icon: Hash, label: 'Init' },
 ]
@@ -82,7 +86,7 @@ export default function MapperPage() {
 
   // Auto-suggest / detect state
   const [suggestedFields, setSuggestedFields] = useState<SuggestedField[]>([])
-  const [suggesting, setSuggesting] = useState<boolean | string>(false) // false | true | 'saving'
+  const [suggesting, setSuggesting] = useState<boolean | string>(false)
   const [detecting, setDetecting] = useState(false)
   const [hoveredSugId, setHoveredSugId] = useState<string | null>(null)
 
@@ -214,11 +218,9 @@ export default function MapperPage() {
           })
 
         for (const item of items) {
-          // Detect underscore-based blanks (3+ underscores make up most of the string)
           const underscoreRatio = (item.str.match(/_/g) || []).length / item.str.length
           if (underscoreRatio < 0.5 || item.str.replace(/[_\s]/g, '').length > 2) continue
 
-          // Find nearest label (text to the left or above, not underscores)
           let bestLabel = ''
           let bestDist = Infinity
           for (const other of items) {
@@ -227,15 +229,13 @@ export default function MapperPage() {
             if (otherUnderscoreRatio > 0.4) continue
             if (other.str.trim().length < 2) continue
 
-            const dx = item.x - (other.x + other.width) // positive = other is to the left
-            const dy = item.y - other.y // positive = other is above
+            const dx = item.x - (other.x + other.width)
+            const dy = item.y - other.y
 
             let d: number
             if (dx >= 0 && dx < 250 && Math.abs(dy) < 15) {
-              // To the left, same line
               d = dx + Math.abs(dy) * 3
             } else if (dy >= 0 && dy < 40 && Math.abs(dx) < 100) {
-              // Above, nearby column
               d = Math.abs(dx) * 0.5 + dy * 2
             } else {
               continue
@@ -260,7 +260,6 @@ export default function MapperPage() {
         return
       }
 
-      // Dedupe against existing fields (skip if position overlaps an existing field)
       const existingFields = allFieldsRef.current
       const filteredBlanks = blanks.filter(b => {
         return !existingFields.some(
@@ -347,13 +346,11 @@ export default function MapperPage() {
   }
   // ─────────────────────────────────────────────────────────────
 
-
   // ── Detect Drawn Lines + Checkboxes (server-side) ────────────
   const runDetectLines = async () => {
     if (!formInfo) return
     setDetecting(true)
     try {
-      // Call server-side detect route — uses pdf-lib + zlib, no PDF.js needed
       const res = await fetch('/api/admin/detect-fields', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -370,7 +367,6 @@ export default function MapperPage() {
         return
       }
 
-      // Dedupe against already-mapped fields
       const filtered = candidates.filter((b: any) =>
         !allFieldsRef.current.some(f => f.page_num === b.page_num && Math.abs(f.x - b.x) < 12 && Math.abs(f.y - b.y) < 12)
       )
@@ -671,7 +667,6 @@ export default function MapperPage() {
             </div>
           )}
 
-
           {/* Detect Lines + Checkboxes button */}
           <button
             onClick={runDetectLines}
@@ -714,7 +709,7 @@ export default function MapperPage() {
           </button>
         </header>
 
-        {/* Suggestion page nav — shows when suggestions span multiple pages */}
+        {/* Suggestion page nav */}
         {suggestedFields.length > 0 && (
           <div className="bg-violet-50 border-b border-violet-200 px-4 py-1.5 flex items-center gap-3 text-xs text-violet-700 flex-shrink-0">
             <Wand2 className="w-3.5 h-3.5" />
@@ -740,6 +735,7 @@ export default function MapperPage() {
                   className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center text-[10px] font-medium transition-all
                     ${drawType === dt.type ? 'bg-indigo-100 text-indigo-700 ring-2 ring-indigo-500 shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>
                   <Icon className="w-5 h-5" />
+                  <span className="mt-0.5">{dt.label}</span>
                 </button>
               )
             })}
@@ -832,7 +828,6 @@ export default function MapperPage() {
                           strokeDasharray="5 3"
                           rx={2}
                         />
-                        {/* Label tooltip on hover */}
                         {hovered && (
                           <g>
                             <rect x={sx} y={sy - 32} width={Math.max(sw, 140)} height={22}
@@ -843,19 +838,16 @@ export default function MapperPage() {
                             </text>
                           </g>
                         )}
-                        {/* Accept button */}
                         <g onClick={e => { e.stopPropagation(); acceptSuggestion(s) }}>
                           <circle cx={sx + sw - 8} cy={sy + 8} r={8} fill="#10b981" />
                           <text x={sx + sw - 8} y={sy + 12} textAnchor="middle" fill="white" fontSize={10} fontWeight="bold"
                             style={{ pointerEvents: 'none' }}>✓</text>
                         </g>
-                        {/* Dismiss button */}
                         <g onClick={e => { e.stopPropagation(); dismissSuggestion(s.id) }}>
                           <circle cx={sx + sw + 8} cy={sy + 8} r={8} fill="#ef4444" />
                           <text x={sx + sw + 8} y={sy + 12} textAnchor="middle" fill="white" fontSize={10} fontWeight="bold"
                             style={{ pointerEvents: 'none' }}>✕</text>
                         </g>
-                        {/* Small label below */}
                         {scale >= 1.2 && (
                           <text x={sx + 2} y={sy + sh + 11} fill="#7c3aed" fontSize={8} fontFamily="monospace"
                             style={{ pointerEvents: 'none', userSelect: 'none' }}>
@@ -909,7 +901,7 @@ export default function MapperPage() {
                   ].join(' ')}
                   onClick={() => { setSelectedKey(f.field_key); if (f.page_num !== pageNum) setPageNum(f.page_num) }}>
                   <div className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: TYPE_COLORS[f.field_type || 'text'] }} />
+                    style={{ backgroundColor: TYPE_COLORS[f.field_type || 'text'] || '#3b82f6' }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-mono text-gray-700 truncate">{f.field_key}</p>
                     <p className="text-[10px] text-gray-400">p{f.page_num} \u00b7 {f.field_type || 'text'}</p>
@@ -966,6 +958,8 @@ function FieldModal({ field, saving, onSave, onCancel, onDelete }: {
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <option value="checkbox">Checkbox</option>
                 <option value="text">Text</option>
+                <option value="number">Number</option>
+                <option value="date">Date</option>
                 <option value="signature">Signature</option>
                 <option value="initial">Initial</option>
               </select>
