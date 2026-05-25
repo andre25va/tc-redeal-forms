@@ -137,9 +137,9 @@ export async function POST(req: NextRequest) {
 
     // Status badge
     const statusLabel =
-      status === 'COMPLIANT'    ? '✓  COMPLIANT' :
-      status === 'NEEDS-REVIEW' ? '◎  NEEDS REVIEW' :
-                                  '✗  NON-COMPLIANT';
+      status === 'COMPLIANT'    ? '[OK]  COMPLIANT' :
+      status === 'NEEDS-REVIEW' ? '[!]  NEEDS REVIEW' :
+                                  '[X]  NON-COMPLIANT';
     const badgeBg =
       status === 'COMPLIANT'    ? { r: 0.94, g: 1.00, b: 0.96 } :
       status === 'NEEDS-REVIEW' ? { r: 0.94, g: 0.97, b: 1.00 } :
@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
     const reviews  = violations.filter(v => v.severity === 'review' || v.severity === 'info');
 
     if (violations.length === 0) {
-      coverPage.drawText('✓  No compliance issues found.', { x: margin, y: cy, size: 11, font: helveticaBold, color: rgb(0.06, 0.63, 0.36) });
+      coverPage.drawText('No compliance issues found.', { x: margin, y: cy, size: 11, font: helveticaBold, color: rgb(0.06, 0.63, 0.36) });
       cy -= 20;
     } else {
       const groups = [
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
         cy -= 14;
         for (const v of g.items) {
           if (cy < 60) break;
-          const bullet = `• ${v.message}  (p.${v.page})`;
+          const bullet = `- ${v.message}  (p.${v.page})`;
           cy = drawWrappedText(coverPage, bullet, margin + 8, cy, contentW - 8, 9, helvetica, { r: 0.20, g: 0.25, b: 0.35 }, 13);
         }
         cy -= 8;
@@ -222,8 +222,8 @@ export async function POST(req: NextRequest) {
       cy -= 12;
       for (const row of initialsGrid) {
         if (cy < 40) break;
-        const sellerMark = row.sellerOk ? (row.seller ?? '✓') : '✗';
-        const buyerMark  = row.buyerOk  ? (row.buyer  ?? '✓') : '✗';
+        const sellerMark = row.sellerOk ? (row.seller ?? 'OK') : 'X';
+        const buyerMark  = row.buyerOk  ? (row.buyer  ?? 'OK') : 'X';
         const sellerColor = row.sellerOk ? rgb(0.06, 0.63, 0.36) : rgb(0.86, 0.15, 0.15);
         const buyerColor  = row.buyerOk  ? rgb(0.06, 0.63, 0.36) : rgb(0.86, 0.15, 0.15);
         coverPage.drawText(`Page ${row.page}:`, { x: margin + 8, y: cy, size: 8, font: helvetica, color: rgb(0.40, 0.40, 0.40) });
