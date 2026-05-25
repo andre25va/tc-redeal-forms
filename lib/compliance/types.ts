@@ -68,6 +68,20 @@ export interface Contract {
   missingFields: MissingField[];
 }
 
+export interface PartyField {
+  fieldId: string;
+  label: string;
+  type: 'initial' | 'signature';
+  status: 'present' | 'missing';
+  page: number;
+}
+
+export interface Party {
+  role: PartyRole;
+  name: string;
+  fields: PartyField[];
+}
+
 export interface ComplianceRule {
   id: string;
   form_slug: string;
