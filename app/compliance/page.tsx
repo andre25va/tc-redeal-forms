@@ -7,7 +7,7 @@ import UploadPanel, {
   CheckResultPayload, VisionCheckResult, VisionViolation, InitialsGridRow, EsigHash, EsigPlatform, platformBadge,
 } from '@/components/compliance/UploadPanel';
 import LibraryView from '@/components/compliance/LibraryView';
-import { ViewPage } from '@/lib/compliance/types';
+import { ViewPage, MissingField } from '@/lib/compliance/types';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 const PDFViewer = dynamic(() => import('@/components/compliance/PDFViewer'), { ssr: false });
@@ -71,7 +71,7 @@ function InitialsGrid({ grid }: { grid: InitialsGridRow[] }) {
   );
 }
 
-// ─── EsigHashesPanel (platform-agnostic) ─────────────────────────────────────
+// ─── EsigHashesPanel ─────────────────────────────────────────────────────────
 
 function EsigHashesPanel({ hashes, platformLabel }: { hashes: EsigHash[]; platformLabel: string }) {
   const [expanded, setExpanded] = useState(true);
@@ -98,7 +98,6 @@ function EsigHashesPanel({ hashes, platformLabel }: { hashes: EsigHash[]; platfo
           </span>
         </div>
       </button>
-
       {expanded && (
         <div style={{ borderTop: '1px solid #f3f4f6' }}>
           {hashes.map((h, i) => (
@@ -119,10 +118,11 @@ function EsigHashesPanel({ hashes, platformLabel }: { hashes: EsigHash[]; platfo
 
 // ─── ViolationsPanel ──────────────────────────────────────────────────────────
 
-function ViolationsPanel({ violations, currentPage, onPageClick }: {
+function ViolationsPanel({ violations, currentPage, onPageClick, hasCoordinates }: {
   violations: VisionViolation[];
   currentPage: number;
   onPageClick: (page: number) => void;
+  hasCoordinates: boolean;
 }) {
   const errors   = violations.filter(v => v.severity === 'error');
   const warnings = violations.filter(v => v.severity === 'warning');
@@ -154,6 +154,12 @@ function ViolationsPanel({ violations, currentPage, onPageClick }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {hasCoordinates && (
+        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 1, border: '2px solid #ef4444', display: 'inline-block' }} />
+          Red/amber boxes shown on PDF where fields are missing
+        </p>
+      )}
       {errors.length > 0 && (
         <div>
           <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#dc2626', marginBottom: 4 }}>
@@ -177,11 +183,11 @@ function ViolationsPanel({ violations, currentPage, onPageClick }: {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function CompliancePage() {
-  const [view, setView]           = useState<ViewPage>('upload');
+  const [view, setView]             = useState<ViewPage>('upload');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pdfFile, setPdfFile]     = useState<File | null>(null);
-  const [payload, setPayload]     = useState<CheckResultPayload | null>(null);
-  const [mlsId, setMlsId]         = useState('');
+  const [pdfFile, setPdfFile]       = useState<File | null>(null);
+  const [payload, setPayload]       = useState<CheckResultPayload | null>(null);
+  const [mlsId, setMlsId]           = useState('');
 
   const NavBar = ({ active }: { active: ViewPage }) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
@@ -235,6 +241,21 @@ export default function CompliancePage() {
     const isCompliant   = vision.status === 'COMPLIANT';
     const platform      = (vision.platform ?? 'unknown') as EsigPlatform;
     const platformLabel = vision.platformLabel ?? 'E-Signature';
+    const hasCoordinates = (vision as any).hasCoordinates ?? false;
+
+    // Build MissingField[] from violationBoxes (returned by check route)
+    const rawBoxes: any[] = (vision as any).violationBoxes ?? [];
+    const missingFields: MissingField[] = rawBoxes.map((b: any) => ({
+      fieldId:  b.fieldId,
+      page:     b.page,
+      x:        b.x,
+      y:        b.y,
+      w:        b.w,
+      h:        b.h,
+      type:     b.type ?? 'required',
+      severity: b.severity ?? 'error',
+      label:    b.label,
+    }));
 
     // Normalize esigHashes (handle both old dotloopHashes and new esigHashes)
     const esigHashes: EsigHash[] = summary.esigHashes ?? (summary as any).dotloopHashes ?? [];
@@ -257,7 +278,6 @@ export default function CompliancePage() {
             <span style={{ fontSize: 13, fontWeight: 600, color: '#1f2937' }}>{payload.form_name}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {/* Platform badge — dynamic */}
             {platformBadge(platform, platformLabel)}
             {isCompliant
               ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#f0fdf4', color: '#16a34a', fontSize: 12, fontWeight: 700 }}><CheckCircle2 size={12} /> COMPLIANT</span>
@@ -285,6 +305,12 @@ export default function CompliancePage() {
           <span style={{ color: '#6b7280' }}>Sigs: {summary.signaturesComplete}</span>
           <span style={{ color: '#d1d5db' }}>·</span>
           <span style={{ color: '#6b7280' }}>Verified: {esigHashes.length}</span>
+          {hasCoordinates && (
+            <>
+              <span style={{ color: '#d1d5db' }}>·</span>
+              <span style={{ color: '#6b7280' }}>{missingFields.length} field{missingFields.length !== 1 ? 's' : ''} highlighted on PDF</span>
+            </>
+          )}
           <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 4 }}>AI vision · gpt-4o</span>
           <button onClick={reset} style={{ marginLeft: 'auto', fontSize: 11, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
             ← New check
@@ -331,33 +357,36 @@ export default function CompliancePage() {
             {/* Initials grid */}
             {initialsGrid.length > 0 && <InitialsGrid grid={initialsGrid} />}
 
-            {/* E-sig hashes — label is platform-specific */}
+            {/* E-sig hashes */}
             <EsigHashesPanel hashes={esigHashes} platformLabel={platformLabel} />
 
             {/* Violations */}
-            {violations.length > 0 && (
-              <div>
-                <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: 6 }}>Issues</p>
-                <ViolationsPanel violations={violations} currentPage={currentPage} onPageClick={setCurrentPage} />
-              </div>
-            )}
-
-            {violations.length === 0 && (
-              <div style={{ borderRadius: 10, border: '1px solid #bbf7d0', background: '#f0fdf4', padding: '12px', textAlign: 'center' }}>
-                <ShieldCheck size={20} color="#16a34a" style={{ margin: '0 auto 4px' }} />
-                <p style={{ fontSize: 12, color: '#16a34a', margin: 0, fontWeight: 600 }}>All checks passed</p>
-                <p style={{ fontSize: 11, color: '#86efac', margin: 0 }}>No issues found in this document</p>
-              </div>
-            )}
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9ca3af', marginBottom: 6 }}>Issues</p>
+              {violations.length > 0 ? (
+                <ViolationsPanel
+                  violations={violations}
+                  currentPage={currentPage}
+                  onPageClick={setCurrentPage}
+                  hasCoordinates={hasCoordinates}
+                />
+              ) : (
+                <div style={{ borderRadius: 10, border: '1px solid #bbf7d0', background: '#f0fdf4', padding: '12px', textAlign: 'center' }}>
+                  <ShieldCheck size={20} color="#16a34a" style={{ margin: '0 auto 4px' }} />
+                  <p style={{ fontSize: 12, color: '#16a34a', margin: 0, fontWeight: 600 }}>All checks passed</p>
+                  <p style={{ fontSize: 11, color: '#86efac', margin: 0 }}>No issues found in this document</p>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Right panel — PDF viewer */}
+          {/* Right panel — PDF viewer with overlay boxes */}
           <div style={{ flex: 1, overflow: 'hidden' }}>
             <PDFViewer
               pdfFile={pdfFile}
               currentPage={currentPage}
               totalPages={vision.numPages}
-              missingFields={[]}
+              missingFields={missingFields}
               onPageChange={setCurrentPage}
             />
           </div>

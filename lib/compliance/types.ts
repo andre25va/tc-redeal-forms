@@ -1,99 +1,31 @@
-export type FieldStatus = 'signed' | 'missing' | 'n/a';
-export type FieldType = 'signature' | 'initial' | 'required';
-export type PartyRole = 'buyer' | 'seller' | 'agent' | 'broker';
+// lib/compliance/types.ts
 
-export interface PartyField {
-  fieldId: string;
-  label: string;
-  page: number;
-  type: FieldType;
-  status: FieldStatus;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface Party {
-  id: string;
-  role: PartyRole;
-  label: string;
-  name: string;
-  fields: PartyField[];
-}
+export type ViewPage = 'upload' | 'library' | 'report';
 
 export interface MissingField {
   fieldId: string;
-  label: string;
-  partyLabel: string;
-  party: string;
   page: number;
-  type: FieldType;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number;  // percentage of page width (0–100)
+  y: number;  // percentage of page height (0–100), y=0 at top
+  w: number;  // percentage of page width
+  h: number;  // percentage of page height
+  type: 'initial' | 'signature' | 'required' | 'blank' | 'warning' | 'text' | 'date' | 'number' | 'checkbox';
+  severity?: 'error' | 'warning' | 'info';
+  label?: string;  // short human-readable label for badge
 }
 
-export interface FieldTrigger {
+export interface MissingFieldGroup {
+  page: number;
+  count: number;
+  fields: MissingField[];
+}
+
+export interface ComplianceRule {
   id: string;
-  fieldLabel: string;
-  condition: string;
-  requiresFormId: string;
-  requiresFormName: string;
-  note: string;
-  enabled: boolean;
+  form_slug: string;
+  field_key: string;
+  rule_type: 'required' | 'required_if' | 'not_blank_if' | 'date_format';
+  condition?: string;
+  message: string;
+  severity: 'error' | 'warning' | 'info';
 }
-
-export interface FiredTrigger {
-  triggerId: string;
-  fieldLabel: string;
-  requiresFormId: string;
-  requiresFormName: string;
-  presentInPackage: boolean;
-}
-
-export interface FormTemplate {
-  id: string;
-  formName: string;
-  shortName: string;
-  version: string;
-  pages: number;
-  requiredSignatures: number;
-  requiredInitials: number;
-  parties: PartyRole[];
-  conditionalTriggers?: FieldTrigger[];
-  /** Public URL to a blank/clean PDF for library preview */
-  pdfUrl?: string;
-}
-
-export interface MlsBoard {
-  id: string;
-  name: string;
-  fullName: string;
-  state: string;
-  region: string;
-  forms: FormTemplate[];
-}
-
-export interface Contract {
-  id: string;
-  formName: string;
-  shortName: string;
-  mlsId?: string;
-  templateId?: string;
-  passed: boolean;
-  totalPages: number;
-  parties: Party[];
-  missingFields: MissingField[];
-  firedTriggers?: FiredTrigger[];
-}
-
-export interface TransactionPackage {
-  fileName: string;
-  uploadedAt: string;
-  mlsId?: string;
-  contracts: Contract[];
-}
-
-export type ViewPage = 'upload' | 'report' | 'library';

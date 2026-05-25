@@ -86,14 +86,39 @@ function drawMockPDFPage(canvas: HTMLCanvasElement | null, page: number) {
   ctx.fillText('Initials _______', W / 2 + 8, H - 16);
 }
 
+// ─── Severity styles ──────────────────────────────────────────────────────────
+
+function severityStyle(severity?: 'error' | 'warning' | 'info') {
+  if (severity === 'warning') {
+    return { border: '#f59e0b', bg: 'rgba(245,158,11,0.12)', badge: '#f59e0b', badgeText: '#fff' };
+  }
+  if (severity === 'info') {
+    return { border: '#3b82f6', bg: 'rgba(59,130,246,0.10)', badge: '#3b82f6', badgeText: '#fff' };
+  }
+  // default = error
+  return { border: '#ef4444', bg: 'rgba(239,68,68,0.13)', badge: '#ef4444', badgeText: '#fff' };
+}
+
+// Short human-readable badge from type/label
+function badgeText(field: MissingField): string {
+  if (field.label) return field.label.slice(0, 8);
+  if (field.type === 'initial') return 'INIT';
+  if (field.type === 'signature') return 'SIG';
+  if (field.type === 'required') return 'REQ';
+  if (field.type === 'blank') return 'BLANK';
+  return 'WARN';
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, missingFields, onPageChange, onTotalPagesLoaded }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pdfDoc, setPdfDoc]     = useState<any>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
-  const [rendering, setRendering] = useState(false);
-  const [docLabel, setDocLabel] = useState<string>('');
+  const [rendering, setRendering]     = useState(false);
+  const [docLabel, setDocLabel]       = useState<string>('');
 
   useEffect(() => {
     if (!pdfFile && !pdfUrl) {
@@ -134,7 +159,6 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (!pdfDoc) {
-      // Mock: draw at fixed size, let CSS display: block handle it
       canvas.width = 520;
       canvas.height = 674;
       canvas.style.width = '520px';
@@ -147,16 +171,14 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       const page = await pdfDoc.getPage(currentPage);
       const containerWidth = containerRef.current?.clientWidth ?? 600;
       const baseViewport = page.getViewport({ scale: 1 });
-      // Fit to container width (minus padding), never exceed 2x native
       const scale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const viewport = page.getViewport({ scale: scale * dpr });
 
-      // Set pixel buffer dimensions
+      // renderPage owns all canvas dimensions — no JSX width/height override
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      // Set CSS display dimensions — renderPage owns these, no JSX style override
-      canvas.style.width = `${viewport.width / dpr}px`;
+      canvas.style.width  = `${viewport.width / dpr}px`;
       canvas.style.height = `${viewport.height / dpr}px`;
 
       const ctx = canvas.getContext('2d');
@@ -173,12 +195,23 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
 
   useEffect(() => { renderPage(); }, [renderPage]);
 
-  const pageMissing = missingFields.filter(f => f.page === currentPage);
+  const pageMissing       = missingFields.filter(f => f.page === currentPage);
+  const pageErrors        = pageMissing.filter(f => !f.severity || f.severity === 'error');
+  const pageWarnings      = pageMissing.filter(f => f.severity === 'warning');
   const effectiveTotalPages = pdfDoc ? pdfDoc.numPages : totalPages;
+
+  // Per-page issue counts for nav dot colors
+  const pageIssueMap: Record<number, 'error' | 'warning' | null> = {};
+  for (const f of missingFields) {
+    const existing = pageIssueMap[f.page];
+    if (!existing) pageIssueMap[f.page] = f.severity === 'warning' ? 'warning' : 'error';
+    else if (existing === 'warning' && f.severity !== 'warning') pageIssueMap[f.page] = 'error';
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#e5e7eb' }}>
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#f3f4f6', borderBottom: '1px solid #d1d5db', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <svg style={{ width: 16, height: 16, color: '#6b7280' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -189,10 +222,15 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
           </span>
           {rendering && <span style={{ fontSize: 11, color: '#93c5fd' }}>Rendering…</span>}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {pageMissing.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {pageErrors.length > 0 && (
             <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fee2e2', color: '#dc2626' }}>
-              {pageMissing.length} issue{pageMissing.length !== 1 ? 's' : ''} on this page
+              {pageErrors.length} error{pageErrors.length !== 1 ? 's' : ''} on page
+            </span>
+          )}
+          {pageWarnings.length > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fffbeb', color: '#d97706' }}>
+              {pageWarnings.length} warning{pageWarnings.length !== 1 ? 's' : ''}
             </span>
           )}
           {pdfUrl && (
@@ -203,46 +241,74 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
         </div>
       </div>
 
-      {/* Error */}
+      {/* ── Error ── */}
       {renderError && (
         <div style={{ padding: '8px 16px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 13, color: '#dc2626' }}>
           ⚠ {renderError}
         </div>
       )}
 
-      {/* Canvas + overlay */}
-      {/* 
-        FIX: canvas has NO width/height CSS in JSX — renderPage sets canvas.style.width/height
-        imperatively after computing the correct PDF scale. A wrapper div handles centering.
-        Previously: style={{ width: '100%', maxWidth: 580 }} caused React to re-apply 100% width
-        on every re-render (triggered by setRendering), stretching the canvas over its pixel buffer.
-      */}
+      {/* ── Legend ── */}
+      {missingFields.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 16px', background: '#fff', borderBottom: '1px solid #f3f4f6', fontSize: 11, color: '#6b7280' }}>
+          <span style={{ fontWeight: 600 }}>Overlay:</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 2, border: '2px solid #ef4444', background: 'rgba(239,68,68,0.15)', display: 'inline-block' }} />
+            Error
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 2, border: '2px solid #f59e0b', background: 'rgba(245,158,11,0.15)', display: 'inline-block' }} />
+            Warning
+          </span>
+          {pageMissing.length === 0 && <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ No issues on this page</span>}
+        </div>
+      )}
+
+      {/* ── Canvas + overlay ── */}
       <div ref={containerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}>
         <div style={{ position: 'relative', boxShadow: '0 10px 40px rgba(0,0,0,0.15)', borderRadius: 2, display: 'inline-block' }}>
           {/* display: block prevents inline baseline gap; no width/height — owned by renderPage */}
           <canvas ref={canvasRef} style={{ display: 'block' }} />
+
+          {/* Violation overlay boxes */}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-            {pageMissing.map(field => {
-              const label = field.type === 'initial' ? 'INI' : 'SIG';
+            {pageMissing.map((field, idx) => {
+              const style = severityStyle(field.severity);
+              const badge = badgeText(field);
               return (
-                <div key={field.fieldId} style={{
-                  position: 'absolute',
-                  left: `${field.x}%`,
-                  top: `${field.y}%`,
-                  width: `${field.w}%`,
-                  height: `${field.h}%`,
-                  border: '2px solid #ef4444',
-                  background: 'rgba(239,68,68,0.13)',
-                  boxSizing: 'border-box',
-                }}>
+                <div
+                  key={`${field.fieldId}-${idx}`}
+                  style={{
+                    position: 'absolute',
+                    left:   `${field.x}%`,
+                    top:    `${field.y}%`,
+                    width:  `${field.w}%`,
+                    height: `${field.h}%`,
+                    border: `2px solid ${style.border}`,
+                    background: style.bg,
+                    boxSizing: 'border-box',
+                    minHeight: 10,
+                  }}
+                  title={field.label ?? field.fieldId}
+                >
                   <span style={{
-                    position: 'absolute', top: -18, left: 0,
-                    fontSize: 9, fontWeight: 700, fontFamily: 'monospace',
-                    background: '#ef4444', color: '#fff',
-                    padding: '1px 4px', borderRadius: '2px 2px 0 0',
-                    whiteSpace: 'nowrap', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis',
+                    position: 'absolute',
+                    top: -17,
+                    left: 0,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    fontFamily: 'monospace',
+                    background: style.badge,
+                    color: style.badgeText,
+                    padding: '1px 4px',
+                    borderRadius: '2px 2px 0 0',
+                    whiteSpace: 'nowrap',
+                    maxWidth: 100,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    pointerEvents: 'none',
                   }}>
-                    {label}: {field.fieldId}
+                    {badge}
                   </span>
                 </div>
               );
@@ -251,27 +317,55 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
         </div>
       </div>
 
-      {/* Page nav */}
+      {/* ── Page navigation ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', background: '#f3f4f6', borderTop: '1px solid #d1d5db', flexShrink: 0 }}>
         <button
           style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage <= 1 ? '#f9fafb' : '#fff', color: currentPage <= 1 ? '#d1d5db' : '#374151', cursor: currentPage <= 1 ? 'not-allowed' : 'pointer', fontSize: 13 }}
-          disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage <= 1}
+          onClick={() => onPageChange(currentPage - 1)}
         >←</button>
+
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 }}>
           {Array.from({ length: effectiveTotalPages }, (_, i) => i + 1).map(p => {
-            const hasMissing = missingFields.some(f => f.page === p);
+            const issue = pageIssueMap[p];
+            const isActive = p === currentPage;
+            const bg = isActive ? '#3b82f6'
+              : issue === 'error' ? '#fee2e2'
+              : issue === 'warning' ? '#fffbeb'
+              : '#e5e7eb';
+            const color = isActive ? '#fff'
+              : issue === 'error' ? '#dc2626'
+              : issue === 'warning' ? '#d97706'
+              : '#6b7280';
             return (
-              <button key={p} onClick={() => onPageChange(p)} style={{
-                width: 28, height: 28, borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: 'none',
-                background: p === currentPage ? '#3b82f6' : hasMissing ? '#fee2e2' : '#e5e7eb',
-                color: p === currentPage ? '#fff' : hasMissing ? '#dc2626' : '#6b7280',
-              }}>{p}</button>
+              <button
+                key={p}
+                onClick={() => onPageChange(p)}
+                style={{
+                  width: 28, height: 28, borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  cursor: 'pointer', border: 'none', background: bg, color,
+                  position: 'relative',
+                }}
+                title={issue ? `Page ${p}: has ${issue}` : `Page ${p}`}
+              >
+                {p}
+                {issue && !isActive && (
+                  <span style={{
+                    position: 'absolute', top: -3, right: -3,
+                    width: 7, height: 7, borderRadius: '50%',
+                    background: issue === 'error' ? '#dc2626' : '#f59e0b',
+                    border: '1.5px solid #fff',
+                  }} />
+                )}
+              </button>
             );
           })}
         </div>
+
         <button
           style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage >= effectiveTotalPages ? '#f9fafb' : '#fff', color: currentPage >= effectiveTotalPages ? '#d1d5db' : '#374151', cursor: currentPage >= effectiveTotalPages ? 'not-allowed' : 'pointer', fontSize: 13 }}
-          disabled={currentPage >= effectiveTotalPages} onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage >= effectiveTotalPages}
+          onClick={() => onPageChange(currentPage + 1)}
         >→</button>
       </div>
     </div>

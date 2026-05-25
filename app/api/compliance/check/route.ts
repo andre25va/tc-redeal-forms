@@ -24,26 +24,20 @@ function detectEsigPlatform(textSample: string): EsigPlatform {
 }
 
 const PLATFORM_LABELS: Record<EsigPlatform, string> = {
-  dotloop:     'Dotloop',
-  docusign:    'DocuSign',
-  hellosign:   'HelloSign / Dropbox Sign',
-  'adobe-sign':'Adobe Sign',
-  unknown:     'E-Signature',
+  dotloop:      'Dotloop',
+  docusign:     'DocuSign',
+  hellosign:    'HelloSign / Dropbox Sign',
+  'adobe-sign': 'Adobe Sign',
+  unknown:      'E-Signature',
 };
 
-/** Returns the platform-specific verification hash pattern hint for the GPT prompt */
 function platformHashHint(platform: EsigPlatform): string {
   switch (platform) {
-    case 'dotloop':
-      return 'Dotloop verification hashes look like: dtlp.us/XXXX-XXXX-XXXX';
-    case 'docusign':
-      return 'DocuSign verification includes an envelope ID (UUID format) and/or a docusign.net URL';
-    case 'hellosign':
-      return 'HelloSign/Dropbox Sign verification includes a hellosign.com or dropboxsign.com URL';
-    case 'adobe-sign':
-      return 'Adobe Sign verification includes an adobesign.com or echosign.com URL';
-    default:
-      return 'Look for any verification URL, hash, or code stamped near the signature block by the e-signature platform';
+    case 'dotloop':    return 'Dotloop verification hashes look like: dtlp.us/XXXX-XXXX-XXXX';
+    case 'docusign':   return 'DocuSign verification includes an envelope ID (UUID format) and/or a docusign.net URL';
+    case 'hellosign':  return 'HelloSign/Dropbox Sign verification includes a hellosign.com or dropboxsign.com URL';
+    case 'adobe-sign': return 'Adobe Sign verification includes an adobesign.com or echosign.com URL';
+    default:           return 'Look for any verification URL, hash, or code stamped near the signature block by the e-signature platform';
   }
 }
 
@@ -60,23 +54,47 @@ interface PageResult {
     signer: string | null;
     signed: boolean;
     timestamp: string | null;
-    esig_hash: string | null;      // was dotloop_hash — now platform-agnostic
+    esig_hash: string | null;
   }>;
-  checkboxes: Array<{
-    label: string;
-    checked: boolean;
-  }>;
-  filled_fields: Array<{
-    label: string;
-    value: string;
-    blank: boolean;
-  }>;
-  compliance_flags: Array<{
-    severity: 'error' | 'warning' | 'info';
-    message: string;
-  }>;
+  checkboxes: Array<{ label: string; checked: boolean }>;
+  filled_fields: Array<{ label: string; value: string; blank: boolean }>;
+  compliance_flags: Array<{ severity: 'error' | 'warning' | 'info'; message: string }>;
   parseError?: boolean;
 }
+
+interface Violation {
+  page: number;
+  message: string;
+  severity: 'error' | 'warning' | 'info';
+}
+
+interface ViolationBox {
+  fieldId: string;
+  page: number;
+  x: number;  // % of page width
+  y: number;  // % of page height (y=0 at top)
+  w: number;
+  h: number;
+  severity: 'error' | 'warning' | 'info';
+  type: string;
+  label: string;
+}
+
+interface FieldCoord {
+  field_key: string;
+  page_num: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  field_type: string;
+  is_signature: boolean;
+  is_initial: boolean;
+}
+
+// Standard US Letter page dimensions in PDF points (72 dpi)
+const PAGE_W = 612;
+const PAGE_H = 792;
 
 // ─── Analyze a single page PDF with GPT-4o ────────────────────────────────────
 
@@ -121,23 +139,13 @@ Return ONLY valid JSON, no markdown fences, no explanation:
     }
   ],
   "checkboxes": [
-    {
-      "label": "checkbox label text",
-      "checked": boolean
-    }
+    { "label": "checkbox label text", "checked": boolean }
   ],
   "filled_fields": [
-    {
-      "label": "field label",
-      "value": "filled value or empty string",
-      "blank": boolean
-    }
+    { "label": "field label", "value": "filled value or empty string", "blank": boolean }
   ],
   "compliance_flags": [
-    {
-      "severity": "error | warning | info",
-      "message": "description"
-    }
+    { "severity": "error | warning | info", "message": "description" }
   ]
 }
 
@@ -165,10 +173,7 @@ Rules:
               filename: `page_${pageNumber}.pdf`,
               file_data: `data:application/pdf;base64,${pageBase64}`,
             },
-            {
-              type: 'input_text',
-              text: prompt,
-            },
+            { type: 'input_text', text: prompt },
           ],
         },
       ],
@@ -208,18 +213,17 @@ Rules:
 
 function aggregateResults(
   pageResults: PageResult[],
-  formSlug: string,
+  matchedSlug: string,
   initialsPages: number[],
   platform: EsigPlatform
 ) {
-  const errors:   Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
-  const warnings: Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
+  const errors:   Violation[] = [];
+  const warnings: Violation[] = [];
 
   let totalSigs = 0, signedSigs = 0;
   let totalFields = 0, blankFields = 0;
   let totalBoxes = 0, checkedBoxes = 0;
 
-  // Platform-agnostic — was "dotloopHashes", now "esigHashes"
   const esigHashes: Array<{ signer: string; hash: string; timestamp: string }> = [];
   const initialsGrid: Array<{
     page: number; seller: string | null; buyer: string | null;
@@ -264,8 +268,8 @@ function aggregateResults(
     }
 
     // Checkboxes
-    totalBoxes    += page.checkboxes.length;
-    checkedBoxes  += page.checkboxes.filter(c => c.checked).length;
+    totalBoxes   += page.checkboxes.length;
+    checkedBoxes += page.checkboxes.filter(c => c.checked).length;
 
     // Fields
     for (const field of page.filled_fields) {
@@ -288,22 +292,126 @@ function aggregateResults(
   return {
     status: isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT',
     method: 'vision-per-page-gpt4o',
-    platform,                         // ← new field
+    platform,
     platformLabel: PLATFORM_LABELS[platform],
     summary: {
-      totalPages: pageResults.length,
-      pagesWithBothInitials: initialsGrid.filter(r => r.sellerOk && r.buyerOk).length,
-      signaturesComplete: `${signedSigs}/${totalSigs}`,
-      checkboxesFilled: `${checkedBoxes}/${totalBoxes}`,
-      fieldsFilled: `${totalFields - blankFields}/${totalFields}`,
-      criticalErrors: errors.length,
-      warnings: warnings.length,
-      esigHashes,                     // ← renamed from dotloopHashes
+      totalPages:              pageResults.length,
+      pagesWithBothInitials:   initialsGrid.filter(r => r.sellerOk && r.buyerOk).length,
+      signaturesComplete:      `${signedSigs}/${totalSigs}`,
+      checkboxesFilled:        `${checkedBoxes}/${totalBoxes}`,
+      fieldsFilled:            `${totalFields - blankFields}/${totalFields}`,
+      criticalErrors:          errors.length,
+      warnings:                warnings.length,
+      esigHashes,
     },
     initialsGrid,
     violations: [...errors, ...warnings],
     pages: pageResults,
   };
+}
+
+// ─── Coordinate matching — map violations → red boxes on PDF ─────────────────
+
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function matchViolationsToCoords(
+  violations: Violation[],
+  coordsByPage: Record<number, FieldCoord[]>
+): ViolationBox[] {
+  const boxes: ViolationBox[] = [];
+  const usedKeys = new Set<string>(); // avoid double-boxing same field
+
+  for (const v of violations) {
+    const pageCoords = coordsByPage[v.page] ?? [];
+    let matched: FieldCoord | null = null;
+    let shortLabel = '';
+
+    if (v.message === 'Seller initials missing' || v.message === 'Buyer initials missing') {
+      const isSeller = v.message.startsWith('Seller');
+      shortLabel = isSeller ? 'INIT-S' : 'INIT-B';
+      // Find initial field for correct party on this page
+      matched = pageCoords.find(c =>
+        (c.is_initial || c.field_type === 'initial') &&
+        c.field_key.includes(isSeller ? 'seller' : 'buyer') &&
+        !usedKeys.has(c.field_key)
+      ) ?? null;
+      // Fallback: any initial field on this page
+      if (!matched) {
+        matched = pageCoords.find(c =>
+          (c.is_initial || c.field_type === 'initial') &&
+          !usedKeys.has(c.field_key)
+        ) ?? null;
+      }
+
+    } else if (v.message.startsWith('Unsigned:')) {
+      shortLabel = 'SIG';
+      const sigLabel = (v.message.match(/Unsigned: "(.+?)"/) ?? [])[1] ?? '';
+      const sigNorm = normalize(sigLabel);
+      // Try to match signature field by label similarity
+      let best: FieldCoord | null = null;
+      let bestScore = 0;
+      for (const c of pageCoords) {
+        if (!(c.is_signature || c.field_type === 'signature')) continue;
+        if (usedKeys.has(c.field_key)) continue;
+        const keyNorm = normalize(c.field_key);
+        let score = 0;
+        if (sigNorm && keyNorm.includes(sigNorm.slice(0, 4))) score += 2;
+        if (sigNorm.includes('seller') && keyNorm.includes('seller')) score += 3;
+        if (sigNorm.includes('buyer') && keyNorm.includes('buyer')) score += 3;
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      // Fallback: first unmatched signature on this page
+      if (!best) best = pageCoords.find(c => (c.is_signature || c.field_type === 'signature') && !usedKeys.has(c.field_key)) ?? null;
+      matched = best;
+
+    } else if (v.message.startsWith('Blank field:')) {
+      shortLabel = 'BLANK';
+      const rawLabel = (v.message.match(/Blank field: "(.+?)"/) ?? [])[1] ?? '';
+      const labelNorm = normalize(rawLabel);
+      let best: FieldCoord | null = null;
+      let bestScore = 0;
+      for (const c of pageCoords) {
+        if (c.is_signature || c.is_initial || c.field_type === 'signature' || c.field_type === 'initial') continue;
+        if (usedKeys.has(c.field_key)) continue;
+        const keyNorm = normalize(c.field_key);
+        // Score based on substring overlap
+        let score = 0;
+        if (labelNorm.length >= 3 && keyNorm.includes(labelNorm.slice(0, Math.min(6, labelNorm.length)))) score += labelNorm.length;
+        if (keyNorm.length >= 3 && labelNorm.includes(keyNorm.slice(0, Math.min(6, keyNorm.length)))) score += keyNorm.length;
+        // Word-level match: split label on spaces and check if any word appears in key
+        const words = rawLabel.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+        for (const word of words) {
+          if (keyNorm.includes(normalize(word))) score += word.length;
+        }
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      if (bestScore >= 3) matched = best;
+
+    } else {
+      // Generic AI flag — try to find any field on the page not already matched
+      shortLabel = v.severity === 'error' ? 'ERR' : 'WARN';
+      // Don't auto-match generic flags to avoid false positives
+    }
+
+    if (matched) {
+      usedKeys.add(matched.field_key);
+      boxes.push({
+        fieldId:  matched.field_key,
+        page:     v.page,
+        x:        (matched.x / PAGE_W) * 100,
+        y:        (matched.y / PAGE_H) * 100,
+        w:        (matched.width / PAGE_W) * 100,
+        h:        Math.max(matched.height / PAGE_H * 100, 1.5), // min visible height
+        severity: v.severity,
+        type:     matched.field_type,
+        label:    shortLabel,
+      });
+    }
+  }
+
+  return boxes;
 }
 
 // ─── Main route ───────────────────────────────────────────────────────────────
@@ -349,10 +457,25 @@ export async function POST(req: NextRequest) {
         .single();
       if (profile) {
         formProfile = {
-          seller_count: profile.seller_count ?? 1,
-          buyer_count:  profile.buyer_count  ?? 1,
+          seller_count:   profile.seller_count ?? 1,
+          buyer_count:    profile.buyer_count  ?? 1,
           initials_pages: profile.initials_pages ?? [],
         };
+      }
+    }
+
+    // Load field coordinates for this template (used for red box overlay)
+    const coordsByPage: Record<number, FieldCoord[]> = {};
+    if (matchedSlug) {
+      const { data: coords } = await supabase
+        .from('field_coordinates')
+        .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial')
+        .eq('form_slug', matchedSlug);
+      if (coords) {
+        for (const c of coords) {
+          if (!coordsByPage[c.page_num]) coordsByPage[c.page_num] = [];
+          coordsByPage[c.page_num].push(c as FieldCoord);
+        }
       }
     }
 
@@ -360,7 +483,6 @@ export async function POST(req: NextRequest) {
 
     // Split PDF and analyze each page
     const pageResults: PageResult[] = [];
-
     for (let i = 0; i < numPages; i++) {
       const singlePageDoc = await PDFDocument.create();
       const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [i]);
@@ -371,17 +493,23 @@ export async function POST(req: NextRequest) {
       const result = await analyzePageWithGPT4o(base64, i + 1, numPages, formProfile, platform);
       pageResults.push(result);
 
-      // Small delay between pages to avoid rate limits
       if (i < numPages - 1) await new Promise(r => setTimeout(r, 300));
     }
 
     // Aggregate
     const report = aggregateResults(pageResults, matchedSlug, initialsPages, platform);
 
+    // Map violations → coordinate boxes for PDF overlay
+    const violationBoxes = Object.keys(coordsByPage).length > 0
+      ? matchViolationsToCoords(report.violations, coordsByPage)
+      : [];
+
     return NextResponse.json({
       ...report,
       formSlug: matchedSlug,
       numPages,
+      violationBoxes,
+      hasCoordinates: Object.keys(coordsByPage).length > 0,
       // Legacy compat alias
       isDotloop: platform === 'dotloop',
     });
