@@ -27,6 +27,40 @@ export interface MissingFieldGroup {
   fields: MissingField[];
 }
 
+export type PartyRole = 'buyer' | 'seller' | 'agent' | 'broker';
+
+export interface FieldTrigger {
+  id: string;
+  fieldLabel: string;
+  condition: string;
+  requiresFormId: string;
+  requiresFormName: string;
+  note: string;
+  enabled: boolean;
+}
+
+export interface FormTemplate {
+  id: string;
+  formName: string;
+  shortName?: string;
+  version: string;
+  pages: number;
+  requiredSignatures: number;
+  requiredInitials: number;
+  parties: PartyRole[];
+  conditionalTriggers?: FieldTrigger[];
+  pdfUrl?: string;
+}
+
+export interface MlsBoard {
+  id: string;
+  name: string;
+  fullName: string;
+  state: string;
+  region: string;
+  forms: FormTemplate[];
+}
+
 export interface Contract {
   id: string;
   shortName: string;
