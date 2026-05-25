@@ -31,6 +31,11 @@ interface FingerprintMatch {
   page_count: number;
 }
 
+// Split multi-state values like 'KS/MO' into individual state strings
+function boardStates(board: { state: string }): string[] {
+  return board.state.split('/');
+}
+
 const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -42,8 +47,16 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
   const [detectedPages, setDetectedPages] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const states = Array.from(new Set(MLS_LIBRARY.map(b => b.state))).sort();
-  const boardsForState = selectedState ? MLS_LIBRARY.filter(b => b.state === selectedState) : [];
+  // Collect all unique states across all boards (including multi-state like KS/MO)
+  const states = Array.from(
+    new Set(MLS_LIBRARY.flatMap(b => boardStates(b)))
+  ).sort();
+
+  // Filter boards where selected state appears in their state list
+  const boardsForState = selectedState
+    ? MLS_LIBRARY.filter(b => boardStates(b).includes(selectedState))
+    : [];
+
   const mls = MLS_LIBRARY.find(b => b.id === selectedMls) ?? null;
 
   const handleDrop = (e: React.DragEvent) => {
@@ -150,7 +163,9 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
                 className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">— Select MLS board —</option>
-                {boardsForState.map(b => <option key={b.id} value={b.id}>{b.name} — {b.fullName}</option>)}
+                {boardsForState.map(b => (
+                  <option key={b.id} value={b.id}>{b.name} — {b.fullName}</option>
+                ))}
               </select>
             </>
           )}
@@ -158,7 +173,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
             <div className="mt-2 px-3 py-2 rounded-lg bg-white border border-gray-200 flex items-center gap-3">
               <div className="flex-1">
                 <p className="text-xs font-medium text-gray-700">{mls.fullName}</p>
-                <p className="text-[11px] text-gray-400">{mls.region} · {mls.forms.length} form templates in library</p>
+                <p className="text-[11px] text-gray-400">{mls.region} · {mls.state} · {mls.forms.length} form templates in library</p>
               </div>
             </div>
           )}

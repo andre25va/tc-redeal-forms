@@ -13,15 +13,22 @@ const ROLE_COLORS: Record<PartyRole, string> = {
 };
 
 const STATE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  CA:  { bg: '#fef2f2', text: '#dc2626', border: '#fecaca' },
-  TX:  { bg: '#fff7ed', text: '#ea580c', border: '#fed7aa' },
-  WA:  { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' },
-  IL:  { bg: '#eef2ff', text: '#4338ca', border: '#c7d2fe' },
-  KS:  { bg: '#fffbeb', text: '#d97706', border: '#fde68a' },
-  MO:  { bg: '#fdf4ff', text: '#9333ea', border: '#e9d5ff' },
+  CA:        { bg: '#fef2f2', text: '#dc2626', border: '#fecaca' },
+  TX:        { bg: '#fff7ed', text: '#ea580c', border: '#fed7aa' },
+  WA:        { bg: '#f0fdf4', text: '#16a34a', border: '#bbf7d0' },
+  IL:        { bg: '#eef2ff', text: '#4338ca', border: '#c7d2fe' },
+  KS:        { bg: '#fffbeb', text: '#d97706', border: '#fde68a' },
+  MO:        { bg: '#fdf4ff', text: '#9333ea', border: '#e9d5ff' },
+  'KS/MO':   { bg: '#fdf8ff', text: '#7c3aed', border: '#ddd6fe' },
+  'MD/VA/DC':{ bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
 };
 
 const DEFAULT_STATE_COLOR = { bg: '#f9fafb', text: '#6b7280', border: '#e5e7eb' };
+
+// Split multi-state values like 'KS/MO' into individual state strings
+function boardStates(board: MlsBoard): string[] {
+  return board.state.split('/');
+}
 
 const TriggerRow: React.FC<{ trigger: FieldTrigger; onToggle: () => void }> = ({ trigger, onToggle }) => (
   <div style={{
@@ -95,7 +102,6 @@ const FormRow: React.FC<{
             <AlertTriangle size={10} />{enabledCount}/{totalCount} rules
           </span>
         ) : <span style={{ fontSize: 11, color: '#e5e7eb' }}>—</span>}
-        {/* View PDF button */}
         {form.pdfUrl ? (
           <button
             onClick={onPreviewPdf}
@@ -161,8 +167,15 @@ export default function LibraryView() {
 
   const board = library.find(b => b.id === selectedId) ?? library[0];
   const sc = STATE_COLORS[board.state] ?? DEFAULT_STATE_COLOR;
-  const allStates = Array.from(new Set(library.map(b => b.state))).sort();
-  const filteredBoards = filterState ? library.filter(b => b.state === filterState) : library;
+
+  // Collect unique individual states (splitting multi-state like KS/MO)
+  const allStates = Array.from(new Set(library.flatMap(b => boardStates(b)))).sort();
+
+  // Filter: show board if selected state appears in its state list
+  const filteredBoards = filterState
+    ? library.filter(b => boardStates(b).includes(filterState))
+    : library;
+
   const totalTriggers = board.forms.reduce((s, f) => s + (f.conditionalTriggers?.filter(t => t.enabled).length ?? 0), 0);
 
   function handleTriggerToggle(formId: string, triggerId: string) {
@@ -200,7 +213,7 @@ export default function LibraryView() {
         {filteredBoards.length === 0 && <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>No boards for {filterState}</p>}
       </div>
 
-      {/* ── Middle: form list (shrinks when PDF preview open) ── */}
+      {/* ── Middle: form list ── */}
       <div style={{ flex: previewPdf ? '0 0 440px' : 1, overflowY: 'auto', padding: 24, borderRight: previewPdf ? '1px solid #e5e7eb' : 'none', minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
