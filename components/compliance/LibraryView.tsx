@@ -1,8 +1,7 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MlsBoard, FormTemplate, PartyRole, FieldTrigger } from '@/lib/compliance/types';
-import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
-import { FileText, PenLine, Fingerprint, ChevronDown, ChevronRight, AlertTriangle, ArrowRight, Eye, X } from 'lucide-react';
+import { FileText, PenLine, Fingerprint, ChevronDown, ChevronRight, AlertTriangle, ArrowRight, Eye, X, Loader2 } from 'lucide-react';
 import PDFViewer from './PDFViewer';
 
 const ROLE_COLORS: Record<PartyRole, string> = {
@@ -25,7 +24,6 @@ const STATE_COLORS: Record<string, { bg: string; text: string; border: string }>
 
 const DEFAULT_STATE_COLOR = { bg: '#f9fafb', text: '#6b7280', border: '#e5e7eb' };
 
-// Split multi-state values like 'KS/MO' into individual state strings
 function boardStates(board: MlsBoard): string[] {
   return board.state.split('/');
 }
@@ -94,7 +92,7 @@ const FormRow: React.FC<{
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {form.parties.map(role => (
-            <span key={role} className={ROLE_COLORS[role]} style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' }}>{role}</span>
+            <span key={role} className={ROLE_COLORS[role as PartyRole]} style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' }}>{role}</span>
           ))}
         </div>
         {totalCount > 0 ? (
@@ -157,26 +155,36 @@ const MlsCard: React.FC<{ board: MlsBoard; isSelected: boolean; onClick: () => v
 };
 
 export default function LibraryView() {
-  const [library, setLibrary] = useState<MlsBoard[]>(MLS_LIBRARY);
-  const [selectedId, setSelectedId] = useState<string>(MLS_LIBRARY[0].id);
+  const [library, setLibrary] = useState<MlsBoard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [expandedFormId, setExpandedFormId] = useState<string | null>(null);
   const [filterState, setFilterState] = useState<string>('');
   const [previewPdf, setPreviewPdf] = useState<{ url: string; formName: string; pages: number } | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewTotalPages, setPreviewTotalPages] = useState(1);
 
+  useEffect(() => {
+    fetch('/api/compliance/library')
+      .then(r => r.json())
+      .then(data => {
+        const lib: MlsBoard[] = data.library ?? [];
+        setLibrary(lib);
+        if (lib.length > 0) setSelectedId(lib[0].id);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
   const board = library.find(b => b.id === selectedId) ?? library[0];
-  const sc = STATE_COLORS[board.state] ?? DEFAULT_STATE_COLOR;
+  const sc = board ? (STATE_COLORS[board.state] ?? DEFAULT_STATE_COLOR) : DEFAULT_STATE_COLOR;
 
-  // Collect unique individual states (splitting multi-state like KS/MO)
   const allStates = Array.from(new Set(library.flatMap(b => boardStates(b)))).sort();
-
-  // Filter: show board if selected state appears in its state list
   const filteredBoards = filterState
     ? library.filter(b => boardStates(b).includes(filterState))
     : library;
 
-  const totalTriggers = board.forms.reduce((s, f) => s + (f.conditionalTriggers?.filter(t => t.enabled).length ?? 0), 0);
+  const totalTriggers = board?.forms.reduce((s, f) => s + (f.conditionalTriggers?.filter(t => t.enabled).length ?? 0), 0) ?? 0;
 
   function handleTriggerToggle(formId: string, triggerId: string) {
     setLibrary(prev => prev.map(b => {
@@ -195,9 +203,28 @@ export default function LibraryView() {
     setPreviewTotalPages(form.pages);
   }
 
+  if (loading) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#9ca3af' }}>
+          <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+          <span style={{ fontSize: 13 }}>Loading compliance library...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!board) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' }}>
+        <p style={{ fontSize: 13, color: '#9ca3af' }}>No compliance library data found.</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: '#f9fafb' }}>
-      {/* ── Left: MLS board list ── */}
+      {/* Left: MLS board list */}
       <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid #e5e7eb', background: '#ffffff', overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ marginBottom: 4 }}>
           <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9ca3af', margin: 0 }}>MLS Boards</p>
@@ -213,7 +240,7 @@ export default function LibraryView() {
         {filteredBoards.length === 0 && <p style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', padding: '20px 0' }}>No boards for {filterState}</p>}
       </div>
 
-      {/* ── Middle: form list ── */}
+      {/* Middle: form list */}
       <div style={{ flex: previewPdf ? '0 0 440px' : 1, overflowY: 'auto', padding: 24, borderRight: previewPdf ? '1px solid #e5e7eb' : 'none', minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
@@ -234,8 +261,8 @@ export default function LibraryView() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f3f4f6' }}>
           <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>Conditional Rules:</span>
-          <span style={{ fontSize: 11, color: '#92400e' }}>☑ Enabled — system will flag missing addenda</span>
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>☐ Disabled — rule won't trigger alerts</span>
+          <span style={{ fontSize: 11, color: '#92400e' }}>Enabled — system will flag missing addenda</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>Disabled — rule will not trigger alerts</span>
         </div>
         <div style={{ background: '#ffffff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto auto', alignItems: 'center', padding: '10px 16px', background: '#f9fafb', borderBottom: '1px solid #e5e7eb', gap: 12 }}>
@@ -254,10 +281,10 @@ export default function LibraryView() {
             />
           ))}
         </div>
-        <p style={{ fontSize: 11, color: '#d1d5db', textAlign: 'center', marginTop: 16 }}>Field-level registry (coordinates, required flags, field IDs) stored in Supabase · field_coordinates table</p>
+        <p style={{ fontSize: 11, color: '#d1d5db', textAlign: 'center', marginTop: 16 }}>Field-level registry (coordinates, required flags, field IDs) stored in Supabase · compliance_rules table</p>
       </div>
 
-      {/* ── Right: PDF preview panel ── */}
+      {/* Right: PDF preview panel */}
       {previewPdf && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#f8faff', borderBottom: '1px solid #dbeafe', flexShrink: 0 }}>
