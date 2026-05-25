@@ -4,7 +4,6 @@ import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Download, BookOpen, CheckSquare, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck } from 'lucide-react';
 
-import { supabase } from '@/lib/supabase';
 import UploadPanel, {
   CheckResultPayload, VisionCheckResult, VisionViolation, InitialsGridRow, EsigHash, EsigPlatform, platformBadge,
 } from '@/components/compliance/UploadPanel';
@@ -316,16 +315,22 @@ function CompliancePageInner() {
             setWritingBack(true);
             try {
               const vision = result.vision;
-              await supabase.from('compliance_checks').insert({
-                deal_id:         dealIdParam,
-                document_id:     documentIdParam || null,
-                check_type:      'vision',
-                source:          'myredeal',
-                passed_count:    vision?.summary?.pagesWithBothInitials ?? 0,
-                violation_count: vision?.summary?.criticalErrors         ?? 0,
-                warning_count:   vision?.summary?.warnings               ?? 0,
-                results:         result as unknown as object,
+              const saveRes = await fetch('/api/compliance/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  dealId:         dealIdParam,
+                  documentId:     documentIdParam || null,
+                  passedCount:    vision?.summary?.pagesWithBothInitials ?? 0,
+                  violationCount: vision?.summary?.criticalErrors         ?? 0,
+                  warningCount:   vision?.summary?.warnings               ?? 0,
+                  results:        result,
+                }),
               });
+              if (!saveRes.ok) {
+                const errText = await saveRes.text();
+                console.error('[compliance] write-back failed:', errText);
+              }
             } catch (err) {
               console.error('[compliance] write-back failed:', err);
             } finally {
