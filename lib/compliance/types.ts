@@ -27,6 +27,13 @@ export interface MissingFieldGroup {
   fields: MissingField[];
 }
 
+export interface Contract {
+  id: string;
+  shortName: string;
+  passed: boolean;
+  missingFields: MissingField[];
+}
+
 export interface ComplianceRule {
   id: string;
   form_slug: string;
