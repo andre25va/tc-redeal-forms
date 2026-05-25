@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -234,19 +234,55 @@ async function aggregateResults(
 
 interface UploadPanelProps {
   onAnalyze: (mlsId: string, file: File, result: CheckResultPayload) => void;
+  /** Pre-select the MLS board (from URL ?board= param) */
+  initialMlsId?: string;
+  /** If set, fetch this PDF on mount and show "Remote PDF ready" UI */
+  initialPdfUrl?: string;
 }
 
 type UploadState = 'idle' | 'rendering' | 'analyzing' | 'aggregating' | 'error';
 
-export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
+export default function UploadPanel({ onAnalyze, initialMlsId, initialPdfUrl }: UploadPanelProps) {
   const [state, setState]         = useState<UploadState>('idle');
-  const [mlsId, setMlsId]         = useState('');
+  const [mlsId, setMlsId]         = useState(initialMlsId ?? '');
   const [dragOver, setDragOver]   = useState(false);
   const [progressPct, setProgressPct] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
   const [progressSub, setProgressSub]     = useState('');
   const [errorMsg, setErrorMsg]   = useState('');
   const fileRef = useRef<File | null>(null);
+
+  // ── Remote PDF (loaded from myredeal via URL param) ───────────────────────
+  const [remotePdfReady, setRemotePdfReady] = useState(false);
+  const remotePdfFileRef = useRef<File | null>(null);
+
+  useEffect(() => {
+    if (!initialMlsId) return;
+    setMlsId(initialMlsId);
+  }, [initialMlsId]);
+
+  useEffect(() => {
+    if (!initialPdfUrl) return;
+    let cancelled = false;
+    async function loadRemotePdf() {
+      try {
+        const res = await fetch(initialPdfUrl!);
+        if (!res.ok) throw new Error('Failed to fetch PDF');
+        const blob = await res.blob();
+        const raw = initialPdfUrl!.split('/').pop() ?? 'document.pdf';
+        const filename = raw.split('?')[0] || 'document.pdf';
+        const file = new File([blob], filename, { type: 'application/pdf' });
+        if (!cancelled) {
+          remotePdfFileRef.current = file;
+          setRemotePdfReady(true);
+        }
+      } catch (e) {
+        console.error('[UploadPanel] failed to load remote PDF:', e);
+      }
+    }
+    loadRemotePdf();
+    return () => { cancelled = true; };
+  }, [initialPdfUrl]);
 
   async function analyze(file: File) {
     fileRef.current = file;
@@ -397,6 +433,23 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
           }}
         >
           <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={handleFileInput} disabled={isLoading} />
+
+          {/* Remote PDF ready — loaded from myredeal */}
+          {remotePdfReady && !isLoading && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+              <div style={{ padding: '10px 16px', borderRadius: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', width: '100%', textAlign: 'center' }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#15803d', margin: 0 }}>✓ PDF loaded from myredeal</p>
+                <p style={{ fontSize: 11, color: '#4ade80', margin: '2px 0 0' }}>{remotePdfFileRef.current?.name}</p>
+              </div>
+              <button
+                onClick={() => remotePdfFileRef.current && analyze(remotePdfFileRef.current)}
+                style={{ padding: '10px 24px', borderRadius: 8, background: '#3b82f6', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer' }}
+              >
+                Run Vision Compliance Check
+              </button>
+              <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>or drop / upload a different PDF below</p>
+            </div>
+          )}
 
           {isLoading ? (
             <>

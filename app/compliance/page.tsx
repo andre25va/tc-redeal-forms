@@ -1,8 +1,10 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Download, BookOpen, CheckSquare, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck } from 'lucide-react';
 
+import { supabase } from '@/lib/supabase';
 import UploadPanel, {
   CheckResultPayload, VisionCheckResult, VisionViolation, InitialsGridRow, EsigHash, EsigPlatform, platformBadge,
 } from '@/components/compliance/UploadPanel';
@@ -198,13 +200,22 @@ function ViolationsPanel({ violations, currentPage, onPageClick, hasCoordinates 
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function CompliancePage() {
+function CompliancePageInner() {
   const [view, setView]             = useState<ViewPage>('upload');
   const [currentPage, setCurrentPage] = useState(1);
   const [pdfFile, setPdfFile]       = useState<File | null>(null);
   const [payload, setPayload]       = useState<CheckResultPayload | null>(null);
   const [mlsId, setMlsId]           = useState('');
   const [exporting, setExporting]   = useState(false);
+  const [writingBack, setWritingBack] = useState(false);
+
+  // ── URL params (passed from myredeal TC app via signed URL handoff) ────────
+  const searchParams    = useSearchParams();
+  const pdfUrlParam     = searchParams.get('pdfUrl');
+  const dealIdParam     = searchParams.get('dealId');
+  const documentIdParam = searchParams.get('documentId');
+  const boardParam      = searchParams.get('board');
+  const isLinkedMode    = !!dealIdParam;
 
   async function handleExport() {
     if (!pdfFile || !payload) return;
@@ -276,13 +287,53 @@ export default function CompliancePage() {
   if (view === 'upload') return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f9fafb', fontFamily: 'sans-serif' }}>
       <NavBar active="upload" />
-      <UploadPanel onAnalyze={(mls, file, result) => {
-        setPdfFile(file);
-        setPayload(result);
-        setMlsId(mls);
-        setCurrentPage(1);
-        setView('report' as ViewPage);
-      }} />
+      {/* Linked-mode banner — shown when opened from myredeal TC app */}
+      {isLinkedMode && (
+        <div style={{
+          background: '#eff6ff', borderBottom: '1px solid #bfdbfe',
+          padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 12, color: '#1d4ed8', flexShrink: 0,
+        }}>
+          <span style={{ fontWeight: 700 }}>🔗 Linked to myredeal</span>
+          <span style={{ color: '#60a5fa' }}>—</span>
+          <span>Results will be saved to this deal automatically after the check completes</span>
+          {writingBack && <span style={{ marginLeft: 8, color: '#3b82f6' }}>Saving…</span>}
+        </div>
+      )}
+
+      <UploadPanel
+        initialMlsId={boardParam ?? undefined}
+        initialPdfUrl={pdfUrlParam ?? undefined}
+        onAnalyze={async (mls, file, result) => {
+          setPdfFile(file);
+          setPayload(result);
+          setMlsId(mls);
+          setCurrentPage(1);
+          setView('report' as ViewPage);
+
+          // ── Write-back to Supabase if opened from myredeal TC app ──────────
+          if (dealIdParam) {
+            setWritingBack(true);
+            try {
+              const vision = result.vision;
+              await supabase.from('compliance_checks').insert({
+                deal_id:         dealIdParam,
+                document_id:     documentIdParam || null,
+                check_type:      'vision',
+                source:          'myredeal',
+                passed_count:    vision?.summary?.pagesWithBothInitials ?? 0,
+                violation_count: vision?.summary?.criticalErrors         ?? 0,
+                warning_count:   vision?.summary?.warnings               ?? 0,
+                results:         result as unknown as object,
+              });
+            } catch (err) {
+              console.error('[compliance] write-back failed:', err);
+            } finally {
+              setWritingBack(false);
+            }
+          }
+        }}
+      />
     </div>
   );
 
@@ -491,4 +542,27 @@ export default function CompliancePage() {
   // Legacy AcroForm path — redirect
   reset();
   return null;
+}
+
+// ─── Default export: wraps inner component in Suspense ───────────────────────
+// Required because useSearchParams() needs a Suspense boundary in Next.js 13+
+
+function CompliancePageFallback() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb', fontFamily: 'sans-serif' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #e5e7eb', borderTopColor: '#3b82f6', animation: 'spin 0.8s linear infinite' }} />
+        <p style={{ fontSize: 13, color: '#9ca3af', margin: 0 }}>Loading compliance checker…</p>
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+export default function CompliancePage() {
+  return (
+    <Suspense fallback={<CompliancePageFallback />}>
+      <CompliancePageInner />
+    </Suspense>
+  );
 }
