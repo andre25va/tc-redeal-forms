@@ -53,6 +53,7 @@ export interface VisionCheckResult {
   formSlug: string;
   isDotloop: boolean;   // legacy compat alias
   numPages: number;
+  usedPageImages?: boolean;
 }
 
 // Legacy AcroForm check result (portal submissions)
@@ -95,13 +96,52 @@ export function platformBadge(platform: EsigPlatform, label: string) {
   );
 }
 
+// ─── Render PDF pages to JPEG images using pdf.js (browser) ──────────────────
+// This lets GPT-4o see rasterized stamp overlays (Dotloop/DocuSign initials)
+// that are invisible when sending raw PDF bytes via input_file.
+
+async function renderPagesToJpeg(file: File, onProgress: (page: number, total: number) => void): Promise<string[]> {
+  const pdfjsLib = await import('pdfjs-dist');
+  // Use CDN worker — matches the pdfjs-dist version in package.json
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+  const total = pdf.numPages;
+  const images: string[] = [];
+
+  for (let pageNum = 1; pageNum <= total; pageNum++) {
+    onProgress(pageNum, total);
+    const page = await pdf.getPage(pageNum);
+
+    // 1.5× scale → ~108 DPI — good quality for vision, keeps upload size reasonable
+    const viewport = page.getViewport({ scale: 1.5 });
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d')!;
+
+    await page.render({ canvasContext: ctx as any, viewport }).promise;
+
+    // Strip the data: prefix — server receives raw base64
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    images.push(dataUrl.split(',')[1]);
+
+    canvas.remove();
+  }
+
+  return images;
+}
+
 // ─── UploadPanel ───────────────────────────────────────────────────────────────
 
 interface UploadPanelProps {
   onAnalyze: (mlsId: string, file: File, result: CheckResultPayload) => void;
 }
 
-type UploadState = 'idle' | 'analyzing' | 'error';
+type UploadState = 'idle' | 'rendering' | 'analyzing' | 'error';
 
 export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
   const [state, setState] = useState<UploadState>('idle');
@@ -113,20 +153,31 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
 
   async function analyze(file: File) {
     fileRef.current = file;
-    setState('analyzing');
+    setState('rendering');
     setErrorMsg('');
-
-    // Simulate page progress messages (real progress comes from server)
-    let pageCounter = 0;
-    const progressInterval = setInterval(() => {
-      pageCounter++;
-      setProgress(`Analyzing page ${pageCounter} with AI vision…`);
-    }, 4500);
+    setProgress('Rendering pages for AI vision…');
 
     try {
+      // Phase 1: Render all pages to JPEG client-side so GPT sees visual stamps
+      const pageImages = await renderPagesToJpeg(file, (page, total) => {
+        setProgress(`Rendering page ${page} of ${total}…`);
+      });
+
+      // Phase 2: Upload + AI analysis
+      setState('analyzing');
+      setProgress('Uploading for compliance check…');
+
+      let pageCounter = 0;
+      const progressInterval = setInterval(() => {
+        pageCounter++;
+        setProgress(`Analyzing page ${pageCounter} with AI vision…`);
+      }, 4500);
+
       const fd = new FormData();
       fd.append('pdf', file);
       if (mlsId) fd.append('mlsId', mlsId);
+      // Attach rendered page images so server can send them to GPT-4o
+      pageImages.forEach((img, i) => fd.append(`pageImage_${i + 1}`, img));
 
       const res = await fetch('/api/compliance/check', { method: 'POST', body: fd });
       clearInterval(progressInterval);
@@ -164,7 +215,6 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
         vision: data,
       });
     } catch (err: any) {
-      clearInterval(progressInterval);
       setErrorMsg(err.message ?? 'Something went wrong');
       setState('error');
     }
@@ -181,6 +231,8 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
     const f = e.target.files?.[0];
     if (f) analyze(f);
   }
+
+  const isLoading = state === 'rendering' || state === 'analyzing';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
@@ -210,19 +262,23 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
           onDrop={handleDrop}
           style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            gap: 10, padding: '40px 24px', borderRadius: 12, cursor: 'pointer',
+            gap: 10, padding: '40px 24px', borderRadius: 12, cursor: isLoading ? 'default' : 'pointer',
             border: `2px dashed ${dragOver ? '#3b82f6' : '#d1d5db'}`,
             background: dragOver ? '#eff6ff' : '#f9fafb',
             transition: 'all 0.15s',
           }}
         >
-          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={handleFileInput} />
-          {state === 'analyzing' ? (
+          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={handleFileInput} disabled={isLoading} />
+          {isLoading ? (
             <>
               <div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTop: '3px solid #3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              <p style={{ fontSize: 13, color: '#374151', margin: 0, fontWeight: 500 }}>Running compliance check…</p>
-              <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{progress || 'Uploading and fingerprinting…'}</p>
-              <p style={{ fontSize: 10, color: '#d1d5db', margin: 0 }}>This may take 1–2 minutes for multi-page documents</p>
+              <p style={{ fontSize: 13, color: '#374151', margin: 0, fontWeight: 500 }}>
+                {state === 'rendering' ? 'Preparing pages…' : 'Running compliance check…'}
+              </p>
+              <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{progress}</p>
+              {state === 'analyzing' && (
+                <p style={{ fontSize: 10, color: '#d1d5db', margin: 0 }}>This may take 1–2 minutes for multi-page documents</p>
+              )}
             </>
           ) : (
             <>
@@ -242,7 +298,7 @@ export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
               </div>
               {state === 'error' && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', width: '100%' }}>
-                  <p style={{ fontSize: 12, color: '#dc2626', margin: 0 }}>⚠ {errorMsg}</p>
+                  <p style={{ fontSize: 12, color: '#dc2626', margin: 0 }}>&#9888; {errorMsg}</p>
                   <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>Click or drop another file to retry</p>
                 </div>
               )}

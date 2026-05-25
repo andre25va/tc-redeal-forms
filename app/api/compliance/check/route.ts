@@ -63,9 +63,6 @@ interface PageResult {
   filled_fields: Array<{ label: string; value: string; blank: boolean; confidence: number }>;
   compliance_flags: Array<{ severity: Severity; message: string; confidence: number }>;
   parseError?: boolean;
-  // DEBUG fields
-  _rawGptResponse?: string;
-  _confidenceBefore?: { sellerConf: number; buyerConf: number };
 }
 
 interface Violation {
@@ -112,28 +109,29 @@ function toSeverity(rawSeverity: string, confidence: number): Severity {
   return 'warning';
 }
 
-// ─── Analyze a single page with GPT-4o ───────────────────────────────────────
+// ─── Build GPT prompt ─────────────────────────────────────────────────────────
 
-async function analyzePageWithGPT4o(
-  pageBase64: string,
+function buildPrompt(
   pageNumber: number,
   totalPages: number,
   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
   platform: EsigPlatform
-): Promise<PageResult> {
+): string {
   const initialsRequired = formProfile?.initials_pages?.includes(pageNumber) ?? true;
   const sellerCount = formProfile?.seller_count ?? 1;
   const buyerCount  = formProfile?.buyer_count  ?? 1;
   const platformLabel = PLATFORM_LABELS[platform];
   const hashHint = platformHashHint(platform);
 
-  const prompt = `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
+  return `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
 
 This PDF was electronically signed via ${platformLabel}.
 ${hashHint}
 
+IMPORTANT: Initial stamps from ${platformLabel} are often rasterized IMAGE overlays baked into the page — they appear as small boxes or badges with initials and a date stamp (e.g. "B 05/14/25" or "MB" with a date). Look carefully at the VISUAL content of the entire page, especially the footer/margin areas, for any stamp-like visual element containing initials.
+
 ${initialsRequired
-  ? `INITIALS REQUIRED: Look for ${sellerCount} seller and ${buyerCount} buyer initial stamp(s), typically in footer/bottom margin.`
+  ? `INITIALS REQUIRED: Look for ${sellerCount} seller and ${buyerCount} buyer initial stamp(s), typically in the footer or bottom margin. These may appear as image overlays with a colored border, initials text, and a date.`
   : `Initials are NOT required on this page.`}
 
 Return ONLY valid JSON, no markdown fences:
@@ -180,32 +178,77 @@ Rules:
 - Filled checkbox (darkened/checked box) = checked; empty outline = unchecked
 - E-sig stamp + verification code = signed; blank line = unsigned
 - N/A, 0, dashes = NOT blank; truly empty lines/boxes = blank
-- Do not flag unchecked checkboxes as errors unless both-option logic requires it`;
+- Do not flag unchecked checkboxes as errors unless both-option logic requires it
+- If you see a visual stamp/badge with initials and date in the footer, that IS the initials — mark present: true`;
+}
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      input: [
-        {
+// ─── Analyze a single page with GPT-4o (image-based) ─────────────────────────
+
+async function analyzePageWithGPT4o(
+  pageBase64: string,          // PDF page bytes (base64) — fallback only
+  pageImageBase64: string | null, // JPEG image (base64) — preferred; sees rasterized stamps
+  pageNumber: number,
+  totalPages: number,
+  formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
+  platform: EsigPlatform
+): Promise<PageResult> {
+  const prompt = buildPrompt(pageNumber, totalPages, formProfile, platform);
+
+  let response: Response;
+
+  if (pageImageBase64) {
+    // ── Preferred path: send rendered JPEG → GPT-4o sees all visual content ──
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{
           role: 'user',
           content: [
             {
-              type: 'input_file',
-              filename: `page_${pageNumber}.pdf`,
-              file_data: `data:application/pdf;base64,${pageBase64}`,
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${pageImageBase64}`,
+                detail: 'high',
+              },
             },
             { type: 'input_text', text: prompt },
           ],
-        },
-      ],
-      max_output_tokens: 2000,
-    }),
-  });
+        }],
+        max_tokens: 2000,
+      }),
+    });
+  } else {
+    // ── Fallback: raw PDF bytes via Responses API ─────────────────────────────
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_file',
+                filename: `page_${pageNumber}.pdf`,
+                file_data: `data:application/pdf;base64,${pageBase64}`,
+              },
+              { type: 'input_text', text: prompt },
+            ],
+          },
+        ],
+        max_output_tokens: 2000,
+      }),
+    });
+  }
 
   if (!response.ok) {
     const err = await response.text();
@@ -218,41 +261,28 @@ Rules:
       },
       signatures: [], checkboxes: [], filled_fields: [],
       compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}`, confidence: 1 }],
-      _rawGptResponse: `API_ERROR: ${err.slice(0, 200)}`,
     };
   }
 
   const data = await response.json();
-  const raw: string = data.output?.[0]?.content?.[0]?.text ?? '';
 
-  // ── DEBUG: log raw response ──────────────────────────────────────────────
-  console.log(`[DEBUG PAGE ${pageNumber}] Raw GPT response (first 600 chars):`, raw.slice(0, 600));
+  // Extract text depending on which API was used
+  const raw: string = pageImageBase64
+    ? (data.choices?.[0]?.message?.content ?? '')
+    : (data.output?.[0]?.content?.[0]?.text ?? '');
 
   try {
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
-    // Capture confidence BEFORE the falsy-fill so we can see the originals
-    const sellerConfBefore = parsed.initials?.seller?.confidence;
-    const buyerConfBefore  = parsed.initials?.buyer?.confidence;
-
-    console.log(`[DEBUG PAGE ${pageNumber}] Initials parsed:`, JSON.stringify({
-      seller: { present: parsed.initials?.seller?.present, value: parsed.initials?.seller?.value, confidence: sellerConfBefore },
-      buyer:  { present: parsed.initials?.buyer?.present,  value: parsed.initials?.buyer?.value,  confidence: buyerConfBefore },
-    }));
-
-    // Ensure confidence fields exist (GPT might omit them)
-    // NOTE: !0 === true, so confidence:0 also gets overwritten here — this is a known bug being investigated
-    if (!parsed.initials?.seller?.confidence) parsed.initials.seller.confidence = 0.9;
-    if (!parsed.initials?.buyer?.confidence)  parsed.initials.buyer.confidence  = 0.9;
-    for (const s of parsed.signatures ?? []) if (!s.confidence) s.confidence = 0.9;
-    for (const c of parsed.checkboxes ?? []) if (!c.confidence) c.confidence = 0.9;
-    for (const f of parsed.filled_fields ?? []) if (!f.confidence) f.confidence = 0.9;
-    for (const flag of parsed.compliance_flags ?? []) if (!flag.confidence) flag.confidence = 0.9;
-
-    // Attach debug fields
-    parsed._rawGptResponse = raw.slice(0, 800);
-    parsed._confidenceBefore = { sellerConf: sellerConfBefore, buyerConf: buyerConfBefore };
+    // Fix: use == null (not falsy !) so confidence=0 stays as 0 and doesn't
+    // bypass the REVIEW_THRESHOLD check — this was the false-positive root cause
+    if (parsed.initials?.seller?.confidence == null) parsed.initials.seller.confidence = 0.9;
+    if (parsed.initials?.buyer?.confidence  == null) parsed.initials.buyer.confidence  = 0.9;
+    for (const s of parsed.signatures ?? [])     if (s.confidence == null) s.confidence = 0.9;
+    for (const c of parsed.checkboxes ?? [])     if (c.confidence == null) c.confidence = 0.9;
+    for (const f of parsed.filled_fields ?? [])  if (f.confidence == null) f.confidence = 0.9;
+    for (const flag of parsed.compliance_flags ?? []) if (flag.confidence == null) flag.confidence = 0.9;
 
     return parsed as PageResult;
   } catch (e) {
@@ -265,7 +295,6 @@ Rules:
       },
       signatures: [], checkboxes: [], filled_fields: [],
       compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response', confidence: 1 }],
-      _rawGptResponse: `PARSE_ERROR: ${raw.slice(0, 400)}`,
     };
   }
 }
@@ -486,6 +515,19 @@ export async function POST(req: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'No PDF uploaded' }, { status: 400 });
 
+    // ── Collect pre-rendered page images from client (if sent) ───────────────
+    // Client renders pages with pdf.js → JPEG base64 → pageImage_1, pageImage_2, ...
+    // This lets GPT-4o see rasterized XObjects (Dotloop/DocuSign stamp images)
+    // that are invisible when sending raw PDF bytes via input_file.
+    const pageImages: Map<number, string> = new Map();
+    for (let i = 1; i <= 50; i++) {
+      const img = formData.get(`pageImage_${i}`) as string | null;
+      if (!img) break;
+      pageImages.set(i, img);
+    }
+    const hasPageImages = pageImages.size > 0;
+    console.log(`[compliance/check] Received ${pageImages.size} pre-rendered page images`);
+
     const arrayBuffer = await file.arrayBuffer();
     const pdfBytes = new Uint8Array(arrayBuffer);
 
@@ -539,13 +581,24 @@ export async function POST(req: NextRequest) {
 
     const pageResults: PageResult[] = [];
     for (let i = 0; i < numPages; i++) {
+      // Extract single page as PDF bytes (fallback path)
       const singlePageDoc = await PDFDocument.create();
       const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [i]);
       singlePageDoc.addPage(copiedPage);
       const pageBytes = await singlePageDoc.save();
-      const base64 = Buffer.from(pageBytes).toString('base64');
+      const pageBase64 = Buffer.from(pageBytes).toString('base64');
 
-      const result = await analyzePageWithGPT4o(base64, i + 1, numPages, formProfile, platform);
+      // Use pre-rendered JPEG if client sent it (preferred: GPT sees visual stamps)
+      const pageImageBase64 = pageImages.get(i + 1) ?? null;
+
+      const result = await analyzePageWithGPT4o(
+        pageBase64,
+        pageImageBase64,
+        i + 1,
+        numPages,
+        formProfile,
+        platform
+      );
       pageResults.push(result);
 
       if (i < numPages - 1) await new Promise(r => setTimeout(r, 300));
@@ -557,21 +610,6 @@ export async function POST(req: NextRequest) {
       ? matchViolationsToCoords(report.violations, coordsByPage)
       : [];
 
-    // ── DEBUG: surface per-page initials data in response ──────────────────
-    const pageDebug = pageResults.map(p => ({
-      page:              p.page,
-      sellerPresent:     p.initials.seller.present,
-      sellerValue:       p.initials.seller.value,
-      sellerConfAfter:   p.initials.seller.confidence,
-      sellerConfBefore:  p._confidenceBefore?.sellerConf ?? null,
-      buyerPresent:      p.initials.buyer.present,
-      buyerValue:        p.initials.buyer.value,
-      buyerConfAfter:    p.initials.buyer.confidence,
-      buyerConfBefore:   p._confidenceBefore?.buyerConf ?? null,
-      parseError:        p.parseError ?? false,
-      rawGpt:            p._rawGptResponse ?? '',
-    }));
-
     return NextResponse.json({
       ...report,
       formSlug: matchedSlug,
@@ -579,7 +617,7 @@ export async function POST(req: NextRequest) {
       violationBoxes,
       hasCoordinates: Object.keys(coordsByPage).length > 0,
       isDotloop: platform === 'dotloop',
-      pageDebug, // ← DEBUG: remove after investigation
+      usedPageImages: hasPageImages,
     });
 
   } catch (err: any) {
