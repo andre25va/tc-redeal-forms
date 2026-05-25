@@ -15,8 +15,6 @@ import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 const PDFViewer = dynamic(() => import('@/components/compliance/PDFViewer'), { ssr: false });
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-
 function guessPartyLabel(fieldKey: string): string {
   const k = fieldKey.toLowerCase();
   if (k.includes('buyer_2') || k.includes('buyer2') || k.includes('purchaser_2')) return 'Buyer 2';
@@ -43,7 +41,6 @@ function buildPackageFromResult(
 ): TransactionPackage {
   const violations: any[] = payload.check.violations ?? [];
 
-  // MissingField entries for PDF overlay
   const missingFields: MissingField[] = violations
     .filter((v: any) => v.page_num > 0 && v.x !== undefined)
     .map((v: any) => ({
@@ -60,7 +57,6 @@ function buildPackageFromResult(
       h: Math.max(v.h ?? 0, 2),
     }));
 
-  // Build parties from violation field keys
   const partyMap = new Map<string, { id: string; role: PartyRole; label: string; name: string; fields: PartyField[] }>();
   for (const v of violations) {
     const label = guessPartyLabel(v.field_key);
@@ -111,8 +107,6 @@ function buildPackageFromResult(
   };
 }
 
-// ─── RequiredAddendaPanel ────────────────────────────────────────────────────
-
 function RequiredAddendaPanel({ contract }: { contract: Contract }) {
   const triggers = contract.firedTriggers ?? [];
   if (triggers.length === 0) return null;
@@ -147,8 +141,6 @@ function RequiredAddendaPanel({ contract }: { contract: Contract }) {
   );
 }
 
-// ─── RealCheckBanner ─────────────────────────────────────────────────────────
-
 function RealCheckBanner({ payload, onReset }: { payload: CheckResultPayload; onReset: () => void }) {
   const { check } = payload;
   const isFlattened = check.is_flattened;
@@ -175,16 +167,12 @@ function RealCheckBanner({ payload, onReset }: { payload: CheckResultPayload; on
   );
 }
 
-// ─── ROLE_GROUPS ─────────────────────────────────────────────────────────────
-
 const ROLE_GROUPS: { role: PartyRole; label: string; color: string }[] = [
   { role: 'buyer', label: 'Buyers', color: 'text-blue-600' },
   { role: 'seller', label: 'Sellers', color: 'text-purple-600' },
   { role: 'agent', label: 'Agents', color: 'text-teal-600' },
   { role: 'broker', label: 'Broker', color: 'text-amber-600' },
 ];
-
-// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function CompliancePage() {
   const [view, setView] = useState<ViewPage>('upload');
@@ -207,8 +195,9 @@ export default function CompliancePage() {
     </div>
   );
 
+  // Upload view — scrollable, grows with content
   if (view === 'upload') return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', overflowY: 'auto', background: '#f9fafb', fontFamily: 'sans-serif' }}>
       <NavBar active="upload" />
       <UploadPanel onAnalyze={(mlsId, file, result) => {
         setPdfFile(file);
@@ -222,8 +211,9 @@ export default function CompliancePage() {
     </div>
   );
 
+  // Library view — scrollable
   if (view === 'library') return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', overflowY: 'auto', background: '#f9fafb', fontFamily: 'sans-serif' }}>
       <NavBar active="library" />
       <LibraryView />
     </div>
@@ -238,9 +228,9 @@ export default function CompliancePage() {
   const totalIssues = totalMissing + missingAddenda;
   const totalPackageIssues = pkg.contracts.reduce((s, c) => s + c.missingFields.length + ((c.firedTriggers ?? []).filter(t => !t.presentInPackage).length), 0);
 
+  // Report view — fixed split-panel layout (intentional overflow:hidden)
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -261,13 +251,11 @@ export default function CompliancePage() {
         </div>
       </div>
 
-      {/* Real check banner */}
       {checkPayload && <RealCheckBanner payload={checkPayload} onReset={() => { setView('upload'); setCheckPayload(null); setPkg(null); }} />}
 
       <ContractTabs contracts={pkg.contracts} activeId={activeContractId} onSelect={(id) => { setActiveContractId(id); setCurrentPage(1); }} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left sidebar */}
         <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid #e5e7eb', overflowY: 'auto', padding: 12, background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ borderRadius: 10, padding: 12, background: totalIssues === 0 ? '#f0fdf4' : '#fff5f5', border: `1px solid ${totalIssues === 0 ? '#bbf7d0' : '#fecaca'}` }}>
             <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: totalIssues === 0 ? '#16a34a' : '#dc2626', margin: 0 }}>
@@ -320,7 +308,6 @@ export default function CompliancePage() {
           )}
         </div>
 
-        {/* PDF viewer */}
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <PDFViewer
             pdfFile={pdfFile}
