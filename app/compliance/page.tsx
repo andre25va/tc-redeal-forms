@@ -204,6 +204,56 @@ export default function CompliancePage() {
   const [pdfFile, setPdfFile]       = useState<File | null>(null);
   const [payload, setPayload]       = useState<CheckResultPayload | null>(null);
   const [mlsId, setMlsId]           = useState('');
+  const [exporting, setExporting]   = useState(false);
+
+  async function handleExport() {
+    if (!pdfFile || !payload) return;
+    const vision = payload.vision as VisionCheckResult | undefined;
+    if (!vision) return;
+    setExporting(true);
+    try {
+      const reader = new FileReader();
+      const pdfBase64: string = await new Promise((res, rej) => {
+        reader.onload = () => res((reader.result as string).split(',')[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(pdfFile);
+      });
+      const { summary, initialsGrid, violations } = vision;
+      const platform      = (vision.platform ?? 'unknown') as EsigPlatform;
+      const platformLabel = vision.platformLabel ?? 'E-Signature';
+      const esigHashes: EsigHash[] = summary.esigHashes ?? (summary as any).dotloopHashes ?? [];
+      const rawBoxes: any[] = (vision as any).violationBoxes ?? [];
+
+      const res = await fetch('/api/compliance/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pdfBase64,
+          formName: payload.form_name,
+          status: vision.status,
+          platformLabel,
+          summary,
+          violations,
+          violationBoxes: rawBoxes,
+          initialsGrid,
+          esigHashes,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `compliance-report-${Date.now()}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('[export]', e);
+      alert('Export failed — see console for details.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const NavBar = ({ active }: { active: ViewPage }) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
@@ -303,8 +353,12 @@ export default function CompliancePage() {
               ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#eff6ff', color: '#2563eb', fontSize: 12, fontWeight: 700 }}><AlertTriangle size={12} /> NEEDS REVIEW</span>
               : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700 }}><XCircle size={12} /> NON-COMPLIANT</span>
             }
-            <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#ffffff', cursor: 'pointer', fontSize: 12, fontWeight: 500, color: '#6b7280' }}>
-              <Download size={12} /> Export
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: exporting ? '#f3f4f6' : '#ffffff', cursor: exporting ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 500, color: exporting ? '#9ca3af' : '#6b7280' }}
+            >
+              <Download size={12} /> {exporting ? 'Exporting…' : 'Export PDF'}
             </button>
           </div>
         </div>
