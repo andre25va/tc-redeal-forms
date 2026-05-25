@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
     const dateW = helvetica.widthOfTextAtSize(dateStr, 10);
     coverPage.drawText(dateStr, {
       x: width - margin - dateW, y: height - 32,
-      size: 10, font: helvetica, color: rgb(1, 1, 1, 0.8),
+      size: 10, font: helvetica, color: rgb(0.9, 0.9, 0.9),
     });
 
     cy = height - 72;
