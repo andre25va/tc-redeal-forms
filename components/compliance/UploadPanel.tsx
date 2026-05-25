@@ -115,8 +115,8 @@ async function renderPagesToJpeg(file: File, onProgress: (page: number, total: n
     onProgress(pageNum, total);
     const page = await pdf.getPage(pageNum);
 
-    // 1.5× scale → ~108 DPI — good quality for vision, keeps upload size reasonable
-    const viewport = page.getViewport({ scale: 1.5 });
+    // 1.0× scale → 72 DPI — sufficient for GPT-4o vision, keeps payload under Vercel 4.5MB limit
+    const viewport = page.getViewport({ scale: 1.0 });
 
     const canvas = document.createElement('canvas');
     canvas.width  = viewport.width;
@@ -126,7 +126,7 @@ async function renderPagesToJpeg(file: File, onProgress: (page: number, total: n
     await page.render({ canvasContext: ctx as any, viewport }).promise;
 
     // Strip the data: prefix — server receives raw base64
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
     images.push(dataUrl.split(',')[1]);
 
     canvas.remove();
