@@ -27,7 +27,7 @@ export interface InitialsGridRow {
 export interface VisionViolation {
   page: number;
   message: string;
-  severity: 'error' | 'warning' | 'info';
+  severity: 'error' | 'warning' | 'review' | 'info';
 }
 
 export interface VisionCheckResult {
