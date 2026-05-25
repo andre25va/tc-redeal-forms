@@ -15,7 +15,6 @@ interface Props {
 const PDFJS_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
 const PDF_WORKER_CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-// Load pdfjs from CDN at runtime — completely bypasses webpack/canvas issues
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadPdfJs(): Promise<any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -135,23 +134,31 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (!pdfDoc) {
+      // Mock: draw at fixed size, let CSS display: block handle it
       canvas.width = 520;
       canvas.height = 674;
+      canvas.style.width = '520px';
+      canvas.style.height = '674px';
       drawMockPDFPage(canvas, currentPage);
       return;
     }
     try {
       setRendering(true);
       const page = await pdfDoc.getPage(currentPage);
-      const containerWidth = containerRef.current?.clientWidth ?? 520;
+      const containerWidth = containerRef.current?.clientWidth ?? 600;
       const baseViewport = page.getViewport({ scale: 1 });
+      // Fit to container width (minus padding), never exceed 2x native
       const scale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const viewport = page.getViewport({ scale: scale * dpr });
+
+      // Set pixel buffer dimensions
       canvas.width = viewport.width;
       canvas.height = viewport.height;
+      // Set CSS display dimensions — renderPage owns these, no JSX style override
       canvas.style.width = `${viewport.width / dpr}px`;
       canvas.style.height = `${viewport.height / dpr}px`;
+
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.fillStyle = '#ffffff';
@@ -204,9 +211,16 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       )}
 
       {/* Canvas + overlay */}
+      {/* 
+        FIX: canvas has NO width/height CSS in JSX — renderPage sets canvas.style.width/height
+        imperatively after computing the correct PDF scale. A wrapper div handles centering.
+        Previously: style={{ width: '100%', maxWidth: 580 }} caused React to re-apply 100% width
+        on every re-render (triggered by setRendering), stretching the canvas over its pixel buffer.
+      */}
       <div ref={containerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}>
-        <div style={{ position: 'relative', boxShadow: '0 10px 40px rgba(0,0,0,0.15)', borderRadius: 2, overflow: 'visible', display: 'inline-block' }}>
-          <canvas ref={canvasRef} width={520} height={674} style={{ display: 'block', width: '100%', maxWidth: 580 }} />
+        <div style={{ position: 'relative', boxShadow: '0 10px 40px rgba(0,0,0,0.15)', borderRadius: 2, display: 'inline-block' }}>
+          {/* display: block prevents inline baseline gap; no width/height — owned by renderPage */}
+          <canvas ref={canvasRef} style={{ display: 'block' }} />
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             {pageMissing.map(field => {
               const label = field.type === 'initial' ? 'INI' : 'SIG';
