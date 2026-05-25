@@ -93,14 +93,11 @@ function severityStyle(severity?: 'error' | 'warning' | 'review' | 'info') {
     return { border: '#f59e0b', bg: 'rgba(245,158,11,0.12)', badge: '#f59e0b', badgeText: '#fff' };
   }
   if (severity === 'review' || severity === 'info') {
-    // Blue = needs human review — GPT was uncertain
     return { border: '#3b82f6', bg: 'rgba(59,130,246,0.10)', badge: '#3b82f6', badgeText: '#fff' };
   }
-  // default = error
   return { border: '#ef4444', bg: 'rgba(239,68,68,0.13)', badge: '#ef4444', badgeText: '#fff' };
 }
 
-// Short human-readable badge from type/label
 function badgeText(field: MissingField): string {
   if (field.label) return field.label.slice(0, 8);
   if (field.type === 'initial') return 'INIT';
@@ -113,21 +110,36 @@ function badgeText(field: MissingField): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, missingFields, onPageChange, onTotalPagesLoaded }) => {
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [pdfDoc, setPdfDoc]     = useState<any>(null);
+  const [pdfDoc, setPdfDoc]           = useState<any>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [rendering, setRendering]     = useState(false);
   const [docLabel, setDocLabel]       = useState<string>('');
   const [zoomLevel, setZoomLevel]     = useState<number>(1.0);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
 
   const ZOOM_STEP = 0.25;
   const ZOOM_MIN  = 0.5;
   const ZOOM_MAX  = 3.0;
-  const zoomIn  = () => setZoomLevel(z => Math.min(+(z + ZOOM_STEP).toFixed(2), ZOOM_MAX));
-  const zoomOut = () => setZoomLevel(z => Math.max(+(z - ZOOM_STEP).toFixed(2), ZOOM_MIN));
+  const zoomIn    = () => setZoomLevel(z => Math.min(+(z + ZOOM_STEP).toFixed(2), ZOOM_MAX));
+  const zoomOut   = () => setZoomLevel(z => Math.max(+(z - ZOOM_STEP).toFixed(2), ZOOM_MIN));
   const zoomReset = () => setZoomLevel(1.0);
+
+  // ── ResizeObserver: re-render whenever panel width changes ──────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setContainerWidth(w);
+    });
+    ro.observe(el);
+    // also seed immediately
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!pdfFile && !pdfUrl) {
@@ -170,7 +182,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     if (!pdfDoc) {
       canvas.width = 520;
       canvas.height = 674;
-      canvas.style.width = '520px';
+      canvas.style.width  = '520px';
       canvas.style.height = '674px';
       drawMockPDFPage(canvas, currentPage);
       return;
@@ -178,18 +190,21 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     try {
       setRendering(true);
       const page = await pdfDoc.getPage(currentPage);
-      const containerWidth = containerRef.current?.clientWidth ?? 600;
+      // Use live containerWidth from ResizeObserver; fallback to clientWidth then 800
+      const availWidth = containerWidth > 0
+        ? containerWidth - 32
+        : (containerRef.current?.clientWidth ?? 800) - 32;
       const baseViewport = page.getViewport({ scale: 1 });
-      // fitScale fills the container; multiply by zoomLevel for user zoom
-      const fitScale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
+      // fitScale fills the full available width — no upper cap so PDF uses all space
+      const fitScale = availWidth / baseViewport.width;
       const scale = fitScale * zoomLevel;
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const viewport = page.getViewport({ scale: scale * dpr });
 
       // renderPage owns all canvas dimensions — no JSX width/height override
-      canvas.width = viewport.width;
+      canvas.width  = viewport.width;
       canvas.height = viewport.height;
-      canvas.style.width  = `${viewport.width / dpr}px`;
+      canvas.style.width  = `${viewport.width  / dpr}px`;
       canvas.style.height = `${viewport.height / dpr}px`;
 
       const ctx = canvas.getContext('2d');
@@ -202,17 +217,17 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     } finally {
       setRendering(false);
     }
-  }, [pdfDoc, currentPage, zoomLevel]);
+  }, [pdfDoc, currentPage, zoomLevel, containerWidth]);
 
   useEffect(() => { renderPage(); }, [renderPage]);
 
-  const pageMissing       = missingFields.filter(f => f.page === currentPage);
-  const pageErrors        = pageMissing.filter(f => !f.severity || f.severity === 'error');
-  const pageWarnings      = pageMissing.filter(f => f.severity === 'warning');
-  const pageReviews       = pageMissing.filter(f => f.severity === 'review');
+  const pageMissing         = missingFields.filter(f => f.page === currentPage);
+  const pageErrors          = pageMissing.filter(f => !f.severity || f.severity === 'error');
+  const pageWarnings        = pageMissing.filter(f => f.severity === 'warning');
+  const pageReviews         = pageMissing.filter(f => f.severity === 'review');
   const effectiveTotalPages = pdfDoc ? pdfDoc.numPages : totalPages;
 
-  // Per-page issue counts for nav dot colors (error > review > warning)
+  // Per-page issue colors for nav dots
   const pageIssueMap: Record<number, 'error' | 'warning' | 'review' | null> = {};
   for (const f of missingFields) {
     const existing = pageIssueMap[f.page];
@@ -224,6 +239,25 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       else if (sev === 'review' && existing === 'warning') pageIssueMap[f.page] = 'review';
     }
   }
+
+  // Shared nav button style
+  const navBtnStyle = (disabled: boolean): React.CSSProperties => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '8px 20px',
+    borderRadius: 8,
+    border: '1.5px solid',
+    borderColor: disabled ? '#e5e7eb' : '#d1d5db',
+    background: disabled ? '#f9fafb' : '#fff',
+    color: disabled ? '#d1d5db' : '#374151',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    fontSize: 15,
+    fontWeight: 600,
+    letterSpacing: '0.01em',
+    transition: 'background 0.15s, border-color 0.15s',
+    flexShrink: 0,
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#e5e7eb' }}>
@@ -312,9 +346,12 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       )}
 
       {/* ── Canvas + overlay ── */}
-      <div ref={containerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}>
+      <div
+        ref={containerRef}
+        style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16 }}
+      >
         <div style={{ position: 'relative', boxShadow: '0 10px 40px rgba(0,0,0,0.15)', borderRadius: 2, display: 'inline-block' }}>
-          {/* display: block prevents inline baseline gap; no width/height — owned by renderPage */}
+          {/* renderPage owns all canvas dimensions — no JSX width/height override */}
           <canvas ref={canvasRef} style={{ display: 'block' }} />
 
           {/* Violation overlay boxes */}
@@ -365,16 +402,32 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       </div>
 
       {/* ── Page navigation ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', background: '#f3f4f6', borderTop: '1px solid #d1d5db', flexShrink: 0 }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 12,
+        padding: '12px 20px',
+        background: '#f3f4f6',
+        borderTop: '1px solid #d1d5db',
+        flexShrink: 0,
+      }}>
+        {/* ← Back */}
         <button
-          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage <= 1 ? '#f9fafb' : '#fff', color: currentPage <= 1 ? '#d1d5db' : '#374151', cursor: currentPage <= 1 ? 'not-allowed' : 'pointer', fontSize: 13 }}
+          style={navBtnStyle(currentPage <= 1)}
           disabled={currentPage <= 1}
           onClick={() => onPageChange(currentPage - 1)}
-        >←</button>
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+          Back
+        </button>
 
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 }}>
+        {/* Page dots */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 420 }}>
           {Array.from({ length: effectiveTotalPages }, (_, i) => i + 1).map(p => {
-            const issue = pageIssueMap[p];
+            const issue    = pageIssueMap[p];
             const isActive = p === currentPage;
             const bg = isActive ? '#3b82f6'
               : issue === 'error'   ? '#fee2e2'
@@ -391,7 +444,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
                 key={p}
                 onClick={() => onPageChange(p)}
                 style={{
-                  width: 28, height: 28, borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  width: 30, height: 30, borderRadius: 6, fontSize: 12, fontWeight: 600,
                   cursor: 'pointer', border: 'none', background: bg, color,
                   position: 'relative',
                 }}
@@ -411,11 +464,17 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
           })}
         </div>
 
+        {/* Next → */}
         <button
-          style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: currentPage >= effectiveTotalPages ? '#f9fafb' : '#fff', color: currentPage >= effectiveTotalPages ? '#d1d5db' : '#374151', cursor: currentPage >= effectiveTotalPages ? 'not-allowed' : 'pointer', fontSize: 13 }}
+          style={navBtnStyle(currentPage >= effectiveTotalPages)}
           disabled={currentPage >= effectiveTotalPages}
           onClick={() => onPageChange(currentPage + 1)}
-        >→</button>
+        >
+          Next
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
       </div>
     </div>
   );
