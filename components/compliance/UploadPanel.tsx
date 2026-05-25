@@ -31,7 +31,7 @@ export interface VisionViolation {
 }
 
 export interface VisionCheckResult {
-  status: 'COMPLIANT' | 'NON-COMPLIANT';
+  status: 'COMPLIANT' | 'NON-COMPLIANT' | 'NEEDS-REVIEW';
   method: 'vision-per-page-gpt4o';
   platform: EsigPlatform;
   platformLabel: string;
