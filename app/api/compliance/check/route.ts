@@ -2,291 +2,320 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { PDFDocument } from 'pdf-lib';
 
+export const runtime = 'nodejs';
+export const maxDuration = 300; // 5 min — 16 pages × ~10s each
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const OPENAI_KEY = process.env.OPENAI_API_KEY!;
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-function toPct(x: number, y: number, w: number, h: number) {
-  return {
-    x: parseFloat(((x / 612) * 100).toFixed(2)),
-    y: parseFloat(((y / 792) * 100).toFixed(2)),
-    w: parseFloat(((w / 612) * 100).toFixed(2)),
-    h: Math.max(parseFloat(((h / 792) * 100).toFixed(2)), 1.5),
+interface PageResult {
+  page: number;
+  initials: {
+    seller: { present: boolean; value: string | null };
+    buyer:  { present: boolean; value: string | null };
   };
+  signatures: Array<{
+    label: string;
+    signer: string | null;
+    signed: boolean;
+    timestamp: string | null;
+    dotloop_hash: string | null;
+  }>;
+  checkboxes: Array<{
+    label: string;
+    checked: boolean;
+  }>;
+  filled_fields: Array<{
+    label: string;
+    value: string;
+    blank: boolean;
+  }>;
+  compliance_flags: Array<{
+    severity: 'error' | 'warning' | 'info';
+    message: string;
+  }>;
+  parseError?: boolean;
 }
 
-function labelFromKey(key: string) {
-  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+// ─── Analyze a single page PDF with GPT-4o ────────────────────────────────────
+
+async function analyzePageWithGPT4o(
+  pageBase64: string,
+  pageNumber: number,
+  totalPages: number,
+  formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null
+): Promise<PageResult> {
+  const initialsRequired = formProfile?.initials_pages?.includes(pageNumber) ?? true;
+  const sellerCount = formProfile?.seller_count ?? 1;
+  const buyerCount  = formProfile?.buyer_count  ?? 1;
+
+  const prompt = `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
+
+This is a Dotloop-signed PDF. Dotloop overlays signature/initial stamps and verification hashes (format: dtlp.us/XXXX-XXXX-XXXX) on top of the base PDF.
+
+${initialsRequired ? `INITIALS REQUIRED ON THIS PAGE: Look for ${sellerCount} seller initial(s) and ${buyerCount} buyer initial(s). They appear as small stamped boxes, typically in the bottom margin or footer.` : `Initials are NOT required on this page.`}
+
+Return ONLY valid JSON, no markdown fences, no explanation:
+
+{
+  "page": ${pageNumber},
+  "initials": {
+    "seller": { "present": boolean, "value": "initials string or null" },
+    "buyer":  { "present": boolean, "value": "initials string or null" }
+  },
+  "signatures": [
+    {
+      "label": "description of signature block",
+      "signer": "name or null",
+      "signed": boolean,
+      "timestamp": "timestamp string or null",
+      "dotloop_hash": "dtlp.us/... or null"
+    }
+  ],
+  "checkboxes": [
+    {
+      "label": "checkbox label text",
+      "checked": boolean
+    }
+  ],
+  "filled_fields": [
+    {
+      "label": "field label",
+      "value": "filled value or empty string",
+      "blank": boolean
+    }
+  ],
+  "compliance_flags": [
+    {
+      "severity": "error | warning | info",
+      "message": "description"
+    }
+  ]
 }
 
-function normalizeKey(s: string): string {
-  return s.toLowerCase().replace(/[\s_.\-()[\]]/g, '');
-}
+Rules:
+- For checkboxes: look at the visual image carefully — a filled/darkened box is checked, empty outline is unchecked
+- For signatures: a Dotloop signature stamp with a hash = signed; blank line = unsigned
+- For fields: any value including "N/A", "0", dashes = NOT blank; only truly empty = blank
+- Flag missing initials as "error", blank optional fields as "warning"
+- Do not flag unchecked checkboxes as errors unless the contract logic requires one of a pair to be checked`;
 
-// ─── Vision-based compliance via GPT-4o Responses API ───────────────────────
-async function visionCheck(
-  pdfBase64: string,
-  fileName: string,
-  templateName: string,
-  profile: any,
-  allFields: Array<{ field_key: string; page_num: number; is_signature: boolean; is_initial: boolean; required: boolean }>
-): Promise<any[]> {
-  const initialsPages: number[] = profile?.initials_pages ?? [];
-  const sellerCount: number = profile?.seller_count ?? 1;
-  const buyerCount: number = profile?.buyer_count ?? 1;
-
-  // Build field lists for the prompt (cap at 60 to avoid token bloat)
-  const requiredText = allFields
-    .filter((f) => f.required && !f.is_signature && !f.is_initial)
-    .slice(0, 60)
-    .map((f) => `  - ${f.field_key} (page ${f.page_num})`)
-    .join('\n');
-
-  const sigList = allFields
-    .filter((f) => f.is_signature)
-    .slice(0, 20)
-    .map((f) => `  - ${f.field_key} (page ${f.page_num})`)
-    .join('\n');
-
-  const iniList = allFields
-    .filter((f) => f.is_initial)
-    .slice(0, 30)
-    .map((f) => `  - ${f.field_key} (page ${f.page_num})`)
-    .join('\n');
-
-  const prompt = `You are a licensed real estate transaction coordinator (TC) performing a compliance review of a completed contract.
-
-FORM: ${templateName}
-PARTIES: ${sellerCount} seller(s), ${buyerCount} buyer(s)
-PAGES THAT REQUIRE INITIALS FROM ALL PARTIES: ${initialsPages.length > 0 ? initialsPages.join(', ') : 'none specified'}
-
-This document was likely signed via Dotloop. Dotloop embeds a short verification URL (dtlp.us/...) near every signature and initial block to confirm authenticity. A signature or initial WITH a dtlp.us hash is fully verified — do not flag it.
-
-━━━ WHAT TO CHECK ━━━
-
-1. REQUIRED TEXT FIELDS — for each field below, read the text at that location. If it is blank or contains only underscores/lines, flag it.
-${requiredText || '  (none)'}
-
-2. SIGNATURES — for each signature line below, look for: (a) a handwritten or typed signature AND (b) a nearby dtlp.us verification link. Flag if either is missing.
-${sigList || '  (none)'}
-
-3. INITIALS — for each initials field below, check that all ${sellerCount + buyerCount} parties have initialed. Flag any that are blank.
-${iniList || '  (none)'}
-
-4. DATES — flag any date field left completely blank.
-
-5. CHECKBOXES — flag any required checkbox section where no option has been selected.
-
-━━━ RULES ━━━
-- A field containing ANY value (name, date, "N/A", "---", "0", a strike-through, or even a single character) counts as FILLED — do NOT flag it.
-- Only flag genuinely blank/empty fields.
-- Signatures confirmed by a dtlp.us hash are VALID.
-- Use severity "error" for blank required fields and missing signatures.
-- Use severity "warning" for items you cannot fully verify visually (e.g., initials you can see but cannot confirm are from the right party).
-
-━━━ OUTPUT ━━━
-Return ONLY a valid JSON array — no markdown, no explanation:
-[
-  {
-    "field_key": "seller_name_1",
-    "page": 1,
-    "severity": "error",
-    "type": "required",
-    "message": "Seller name 1 appears blank"
-  }
-]
-type must be one of: required | signature | initial | date | checkbox
-If the document looks fully complete with no issues, return an empty array: []`;
-
-  const body = {
-    model: 'gpt-4o',
-    input: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'input_file',
-            filename: fileName,
-            file_data: `data:application/pdf;base64,${pdfBase64}`,
-          },
-          {
-            type: 'input_text',
-            text: prompt,
-          },
-        ],
-      },
-    ],
-  };
-
-  const res = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${OPENAI_KEY}`,
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              filename: `page_${pageNumber}.pdf`,
+              file_data: `data:application/pdf;base64,${pageBase64}`,
+            },
+            {
+              type: 'input_text',
+              text: prompt,
+            },
+          ],
+        },
+      ],
+      max_output_tokens: 2000,
+    }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error('OpenAI Responses API error:', errText);
-    throw new Error(`OpenAI vision check failed: ${res.status} — ${errText.slice(0, 200)}`);
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`GPT-4o error on page ${pageNumber}:`, err);
+    return { page: pageNumber, parseError: true, initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } }, signatures: [], checkboxes: [], filled_fields: [], compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}` }] };
   }
 
-  const data = await res.json();
+  const data = await response.json();
+  const raw: string = data.output?.[0]?.content?.[0]?.text ?? '';
 
-  let violations: any[] = [];
   try {
-    const raw: string = data.output?.[0]?.content?.[0]?.text ?? '[]';
-    // Strip markdown code fences if GPT wraps in them despite instructions
-    const cleaned = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    violations = JSON.parse(cleaned);
+    const clean = raw.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
   } catch (e) {
-    console.error('Failed to parse GPT-4o vision response:', JSON.stringify(data).slice(0, 500));
+    console.error(`JSON parse error on page ${pageNumber}:`, e, '\nRaw:', raw.slice(0, 300));
+    return { page: pageNumber, parseError: true, initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } }, signatures: [], checkboxes: [], filled_fields: [], compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response' }] };
   }
-
-  return violations;
 }
 
-// ─── Main route ──────────────────────────────────────────────────────────────
+// ─── Aggregate results across all pages ──────────────────────────────────────
+
+function aggregateResults(pageResults: PageResult[], formSlug: string, initialsPages: number[]) {
+  const errors: Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
+  const warnings: Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
+
+  let totalSigs = 0, signedSigs = 0;
+  let totalFields = 0, blankFields = 0;
+  let totalBoxes = 0, checkedBoxes = 0;
+  const dotloopHashes: Array<{ signer: string; hash: string; timestamp: string }> = [];
+  const initialsGrid: Array<{ page: number; seller: string | null; buyer: string | null; sellerOk: boolean; buyerOk: boolean }> = [];
+
+  for (const page of pageResults) {
+    if (page.parseError) {
+      errors.push({ page: page.page, message: 'AI analysis failed for this page', severity: 'error' });
+      continue;
+    }
+
+    // Initials
+    const needsInitials = initialsPages.length === 0 || initialsPages.includes(page.page);
+    initialsGrid.push({
+      page: page.page,
+      seller: page.initials.seller.value,
+      buyer:  page.initials.buyer.value,
+      sellerOk: !needsInitials || page.initials.seller.present,
+      buyerOk:  !needsInitials || page.initials.buyer.present,
+    });
+    if (needsInitials && !page.initials.seller.present)
+      errors.push({ page: page.page, message: 'Seller initials missing', severity: 'error' });
+    if (needsInitials && !page.initials.buyer.present)
+      errors.push({ page: page.page, message: 'Buyer initials missing', severity: 'error' });
+
+    // Signatures
+    for (const sig of page.signatures) {
+      totalSigs++;
+      if (sig.signed) {
+        signedSigs++;
+        if (sig.dotloop_hash) dotloopHashes.push({ signer: sig.signer ?? sig.label, hash: sig.dotloop_hash, timestamp: sig.timestamp ?? '' });
+      } else {
+        errors.push({ page: page.page, message: `Unsigned: "${sig.label}"`, severity: 'error' });
+      }
+    }
+
+    // Checkboxes
+    totalBoxes += page.checkboxes.length;
+    checkedBoxes += page.checkboxes.filter(c => c.checked).length;
+
+    // Fields
+    for (const field of page.filled_fields) {
+      totalFields++;
+      if (field.blank) {
+        blankFields++;
+        warnings.push({ page: page.page, message: `Blank field: "${field.label}"`, severity: 'warning' });
+      }
+    }
+
+    // AI flags
+    for (const flag of page.compliance_flags) {
+      const list = flag.severity === 'error' ? errors : warnings;
+      list.push({ page: page.page, message: flag.message, severity: flag.severity });
+    }
+  }
+
+  const isCompliant = errors.length === 0;
+
+  return {
+    status: isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT',
+    method: 'vision-per-page-gpt4o',
+    summary: {
+      totalPages: pageResults.length,
+      pagesWithBothInitials: initialsGrid.filter(r => r.sellerOk && r.buyerOk).length,
+      signaturesComplete: `${signedSigs}/${totalSigs}`,
+      checkboxesFilled: `${checkedBoxes}/${totalBoxes}`,
+      fieldsFilled: `${totalFields - blankFields}/${totalFields}`,
+      criticalErrors: errors.length,
+      warnings: warnings.length,
+      dotloopHashes,
+    },
+    initialsGrid,
+    violations: [...errors, ...warnings],
+    pages: pageResults,
+  };
+}
+
+// ─── Main route ───────────────────────────────────────────────────────────────
+
 export async function POST(req: NextRequest) {
   try {
-    const ct = req.headers.get('content-type') ?? '';
-    if (!ct.includes('multipart')) {
-      return NextResponse.json({ error: 'multipart/form-data required' }, { status: 400 });
+    const formData = await req.formData();
+    const file = formData.get('pdf') as File | null;
+    const formSlug = (formData.get('formSlug') as string) || '';
+
+    if (!file) return NextResponse.json({ error: 'No PDF uploaded' }, { status: 400 });
+
+    // Load PDF bytes
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfBytes = new Uint8Array(arrayBuffer);
+
+    // Detect dotloop
+    const textSample = Buffer.from(pdfBytes).toString('latin1').slice(0, 50000);
+    const isDotloop = textSample.includes('dtlp.us') || textSample.includes('dotloop');
+
+    // Load and split into pages with pdf-lib
+    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const numPages = pdfDoc.getPageCount();
+
+    // Fingerprint — match template
+    let matchedSlug = formSlug;
+    if (!matchedSlug) {
+      // Try to find by page count
+      const { data: templates } = await supabase
+        .from('form_templates')
+        .select('slug, page_count')
+        .eq('page_count', numPages)
+        .limit(5);
+      if (templates && templates.length === 1) matchedSlug = templates[0].slug;
     }
 
-    const fd = await req.formData();
-    const formSlug = (fd.get('form_slug') as string) ?? '';
-    const file = fd.get('pdf') as File | null;
-
-    if (!file) {
-      return NextResponse.json({ error: 'No PDF file uploaded' }, { status: 400 });
-    }
-
-    const bytes = new Uint8Array(await file.arrayBuffer());
-
-    // ── 1. Try AcroForm extraction ──────────────────────────────────────────
-    const fieldValues: Record<string, string> = {};
-    let rawFieldCount = 0;
-
-    try {
-      const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-      const form = pdfDoc.getForm();
-      const fields = form.getFields();
-      rawFieldCount = fields.length;
-
-      for (const field of fields) {
-        const name = field.getName();
-        const type = field.constructor.name;
-        let val = '';
-        try {
-          if (type === 'PDFTextField')   val = form.getTextField(name).getText() ?? '';
-          else if (type === 'PDFCheckBox')  val = form.getCheckBox(name).isChecked() ? 'yes' : '';
-          else if (type === 'PDFDropdown')  val = form.getDropdown(name).getSelected()[0] ?? '';
-          else if (type === 'PDFRadioGroup') val = form.getRadioGroup(name).getSelected() ?? '';
-          else if (type === 'PDFSignature')  val = '__signature__';
-        } catch {}
-        if (val) fieldValues[name] = val;
-      }
-    } catch (e) {
-      console.error('AcroForm load error:', e);
-    }
-
-    // ── 2. Load DB fields for this template ─────────────────────────────────
-    const { data: dbFields } = await supabase
-      .from('field_coordinates')
-      .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial, required')
-      .eq('form_slug', formSlug);
-
-    const totalDbFields = dbFields?.length ?? 0;
-
-    // ── 3. Normalize-match AcroForm names → DB keys ─────────────────────────
-    const dbNormMap: Record<string, string> = {};
-    for (const f of dbFields ?? []) {
-      dbNormMap[normalizeKey(f.field_key)] = f.field_key;
-    }
-
-    const matchedValues: Record<string, string> = {};
-    for (const [acroName, val] of Object.entries(fieldValues)) {
-      const dbKey = dbNormMap[normalizeKey(acroName)];
-      if (dbKey) matchedValues[dbKey] = val;
-    }
-
-    const extractedCount = Object.keys(matchedValues).length;
-    const matchPct = totalDbFields > 0 ? extractedCount / totalDbFields : 0;
-
-    // ── 4. Decide path: AcroForm (≥10% match) or Vision (flattened) ─────────
-    const isFlattened = rawFieldCount === 0 || matchPct < 0.1;
-
-    // ── 5. Get template name + profile ──────────────────────────────────────
-    const [{ data: template }, { data: profile }] = await Promise.all([
-      supabase.from('form_templates').select('name').eq('slug', formSlug).single(),
-      supabase.from('form_profiles').select('*').eq('form_slug', formSlug).single(),
-    ]);
-
-    const matchedTemplate = template?.name ?? formSlug;
-
-    // ── 6. Run compliance check ─────────────────────────────────────────────
-    let violations: any[] = [];
-    let method = 'acroform';
-
-    if (isFlattened) {
-      // Vision path — GPT-4o reads the whole PDF
-      method = 'vision-gpt4o';
-      const base64 = Buffer.from(bytes).toString('base64');
-      violations = await visionCheck(base64, file.name, matchedTemplate, profile, dbFields ?? []);
-    } else {
-      // AcroForm path — check matched values against required fields
-      method = 'acroform';
-      for (const f of (dbFields ?? []).filter((f) => f.required)) {
-        const val = (matchedValues[f.field_key] ?? '').trim();
-        if (!val || val === '__signature__') {
-          violations.push({
-            field_key: f.field_key,
-            page: f.page_num,
-            severity: 'error',
-            type: f.is_signature ? 'signature' : f.is_initial ? 'initial' : 'required',
-            message: `${labelFromKey(f.field_key)} is blank`,
-          });
-        }
-      }
-    }
-
-    // ── 7. Map violations → overlay boxes using DB coordinates ──────────────
-    const dbFieldMap = new Map((dbFields ?? []).map((f) => [f.field_key, f]));
-
-    const boxes = violations
-      .map((v: any) => {
-        const dbField = dbFieldMap.get(v.field_key);
-        if (!dbField) return null;
-        const pct = toPct(dbField.x, dbField.y, dbField.width, dbField.height);
-        return {
-          field_key: v.field_key,
-          page: v.page ?? dbField.page_num,
-          severity: v.severity ?? 'error',
-          type: v.type ?? 'required',
-          message: v.message ?? `${labelFromKey(v.field_key)} needs attention`,
-          ...pct,
+    // Load form profile
+    let formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null = null;
+    if (matchedSlug) {
+      const { data: profile } = await supabase
+        .from('form_profiles')
+        .select('seller_count, buyer_count, initials_pages')
+        .eq('form_slug', matchedSlug)
+        .single();
+      if (profile) {
+        formProfile = {
+          seller_count: profile.seller_count ?? 1,
+          buyer_count: profile.buyer_count ?? 1,
+          initials_pages: profile.initials_pages ?? [],
         };
-      })
-      .filter(Boolean);
+      }
+    }
+
+    const initialsPages: number[] = formProfile?.initials_pages ?? [];
+
+    // Split PDF and analyze each page
+    const pageResults: PageResult[] = [];
+
+    for (let i = 0; i < numPages; i++) {
+      const singlePageDoc = await PDFDocument.create();
+      const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [i]);
+      singlePageDoc.addPage(copiedPage);
+      const pageBytes = await singlePageDoc.save();
+      const base64 = Buffer.from(pageBytes).toString('base64');
+
+      const result = await analyzePageWithGPT4o(base64, i + 1, numPages, formProfile);
+      pageResults.push(result);
+
+      // Small delay between pages to avoid rate limits
+      if (i < numPages - 1) await new Promise(r => setTimeout(r, 300));
+    }
+
+    // Aggregate
+    const report = aggregateResults(pageResults, matchedSlug, initialsPages);
 
     return NextResponse.json({
-      matched_template: matchedTemplate,
-      is_flattened: isFlattened,
-      is_dotloop: isFlattened,
-      method,
-      total_db_fields: totalDbFields,
-      extracted_count: extractedCount,
-      violations,
-      boxes,
+      ...report,
+      formSlug: matchedSlug,
+      isDotloop,
+      numPages,
     });
+
   } catch (err: any) {
     console.error('Compliance check error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 });
   }
 }

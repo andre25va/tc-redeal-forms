@@ -2,20 +2,68 @@
 import React, { useState, useRef } from 'react';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
+// ─── Types ─────────────────────────────────────────────────────────────────────
+
+export interface DotloopHash {
+  signer: string;
+  hash: string;
+  timestamp: string;
+}
+
+export interface InitialsGridRow {
+  page: number;
+  seller: string | null;
+  buyer: string | null;
+  sellerOk: boolean;
+  buyerOk: boolean;
+}
+
+export interface VisionViolation {
+  page: number;
+  message: string;
+  severity: 'error' | 'warning' | 'info';
+}
+
+export interface VisionCheckResult {
+  status: 'COMPLIANT' | 'NON-COMPLIANT';
+  method: 'vision-per-page-gpt4o';
+  summary: {
+    totalPages: number;
+    pagesWithBothInitials: number;
+    signaturesComplete: string;
+    checkboxesFilled: string;
+    fieldsFilled: string;
+    criticalErrors: number;
+    warnings: number;
+    dotloopHashes: DotloopHash[];
+  };
+  initialsGrid: InitialsGridRow[];
+  violations: VisionViolation[];
+  pages: any[];
+  formSlug: string;
+  isDotloop: boolean;
+  numPages: number;
+}
+
+// Legacy AcroForm check result (portal submissions)
+export interface AcroCheckResult {
+  passed: boolean;
+  is_flattened: boolean;
+  violations: any[];
+  errors: number;
+  warnings: number;
+  fields_extracted: number;
+  fields_checked: number;
+}
+
 export interface CheckResultPayload {
   form_slug: string;
   form_name: string;
   page_count: number;
   detected_fields: number;
-  check: {
-    passed: boolean;
-    is_flattened: boolean;
-    violations: any[];
-    errors: number;
-    warnings: number;
-    fields_extracted: number;
-    fields_checked: number;
-  };
+  // one of these is populated depending on which path ran
+  check?: AcroCheckResult;
+  vision?: VisionCheckResult;
 }
 
 interface Props {
@@ -31,7 +79,6 @@ interface FingerprintMatch {
   page_count: number;
 }
 
-// Split multi-state values like 'KS/MO' into individual state strings
 function boardStates(board: { state: string }): string[] {
   return board.state.split('/');
 }
@@ -45,14 +92,13 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
   const [selectedMls, setSelectedMls] = useState('');
   const [matches, setMatches] = useState<FingerprintMatch[]>([]);
   const [detectedPages, setDetectedPages] = useState(0);
+  const [pageProgress, setPageProgress] = useState<{ current: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Collect all unique states across all boards (including multi-state like KS/MO)
   const states = Array.from(
     new Set(MLS_LIBRARY.flatMap(b => boardStates(b)))
   ).sort();
 
-  // Filter boards where selected state appears in their state list
   const boardsForState = selectedState
     ? MLS_LIBRARY.filter(b => boardStates(b).includes(selectedState))
     : [];
@@ -82,10 +128,9 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
       setDetectedPages(fpData.detected_pages ?? 0);
 
       if (!fpData.matches?.length) {
-        throw new Error('No matching form templates found for this PDF. Upload a PDF that matches one of your form templates.');
+        throw new Error('No matching form templates found. Make sure this PDF matches one of your form templates.');
       }
 
-      // Auto-select if top match is ≥ 70% confident; otherwise show picker
       if (fpData.matches[0].confidence >= 70) {
         await runCheck(fpData.matches[0], fpData.detected_fields ?? 0);
       } else {
@@ -100,31 +145,54 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
 
   const runCheck = async (match: FingerprintMatch, detectedFieldsCount: number) => {
     setStep('checking');
+    setPageProgress({ current: 0, total: match.page_count || detectedPages });
+
     try {
       const checkFd = new FormData();
       checkFd.append('pdf', file!);
       checkFd.append('form_slug', match.form_slug);
+
+      // Simulate page progress while waiting (we don't have streaming)
+      const total = match.page_count || detectedPages || 16;
+      let fakeProgress = 0;
+      const progressInterval = setInterval(() => {
+        fakeProgress = Math.min(fakeProgress + 1, total - 1);
+        setPageProgress({ current: fakeProgress, total });
+      }, 4000); // ~4s per page average
+
       const checkRes = await fetch('/api/compliance/check', { method: 'POST', body: checkFd });
+      clearInterval(progressInterval);
+
       const checkData = await checkRes.json();
       if (checkData.error) throw new Error(checkData.error);
+
+      setPageProgress(null);
+
+      // Determine if this is a vision result or legacy AcroForm result
+      const isVision = checkData.method === 'vision-per-page-gpt4o';
 
       onAnalyze(selectedMls, file!, {
         form_slug: match.form_slug,
         form_name: match.name,
         page_count: match.page_count ?? detectedPages,
         detected_fields: detectedFieldsCount,
-        check: checkData,
+        ...(isVision ? { vision: checkData as VisionCheckResult } : { check: checkData }),
       });
     } catch (e: any) {
+      setPageProgress(null);
       setError(e.message);
       setStep('form');
     }
   };
 
+  const isLoading = step === 'fingerprinting' || step === 'checking';
+
   const statusMessage = step === 'fingerprinting'
     ? 'Identifying form…'
-    : step === 'checking'
-    ? 'Running compliance check…'
+    : step === 'checking' && pageProgress
+    ? pageProgress.current === 0
+      ? 'Starting AI vision analysis…'
+      : `Analyzing page ${pageProgress.current} of ${pageProgress.total} with AI…`
     : null;
 
   return (
@@ -139,7 +207,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
             </div>
             <span className="text-2xl font-bold text-gray-800">Compliance Check</span>
           </div>
-          <p className="text-gray-400 text-sm">Upload a signed PDF to auto-identify the form and verify all signatures and initials</p>
+          <p className="text-gray-400 text-sm">Upload a signed PDF to auto-identify the form and verify all signatures, initials, and required fields</p>
         </div>
 
         {/* State + MLS */}
@@ -187,7 +255,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
+          onClick={() => !isLoading && inputRef.current?.click()}
         >
           <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
           {file ? (
@@ -201,7 +269,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
                 <p className="font-semibold text-gray-800">{file.name}</p>
                 <p className="text-sm text-gray-400">{(file.size / 1024).toFixed(0)} KB · PDF</p>
               </div>
-              <p className="text-xs text-gray-300">Click to change file</p>
+              {!isLoading && <p className="text-xs text-gray-300">Click to change file</p>}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
@@ -214,7 +282,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
                 <p className="font-semibold text-gray-700">Drop your PDF here</p>
                 <p className="text-sm text-gray-400">or click to browse</p>
               </div>
-              <p className="text-xs text-gray-300">Supports DocuSign · Dotloop · Adobe Sign · Full packages</p>
+              <p className="text-xs text-gray-300">Supports DocuSign · Dotloop · Adobe Sign</p>
             </div>
           )}
         </div>
@@ -226,7 +294,7 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
           </div>
         )}
 
-        {/* Form picker when confidence is low */}
+        {/* Form picker */}
         {step === 'picking' && matches.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
             <p className="text-sm font-semibold text-amber-800 mb-3">
@@ -262,14 +330,29 @@ const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
           </button>
         )}
 
-        {/* Loading states */}
+        {/* Loading state with progress */}
         {statusMessage && (
-          <div className="mt-4 flex items-center justify-center gap-3 py-3 rounded-xl bg-blue-50 border border-blue-200">
-            <svg className="animate-spin w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <span className="text-sm font-medium text-blue-700">{statusMessage}</span>
+          <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <svg className="animate-spin w-4 h-4 text-blue-600 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <span className="text-sm font-medium text-blue-700">{statusMessage}</span>
+            </div>
+            {pageProgress && pageProgress.total > 0 && (
+              <>
+                <div className="w-full bg-blue-100 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-1000"
+                    style={{ width: `${Math.round((pageProgress.current / pageProgress.total) * 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-blue-400 mt-1">
+                  This takes about {Math.round(pageProgress.total * 4 / 60)} minute{pageProgress.total > 15 ? 's' : ''} for a {pageProgress.total}-page document
+                </p>
+              </>
+            )}
           </div>
         )}
       </div>
