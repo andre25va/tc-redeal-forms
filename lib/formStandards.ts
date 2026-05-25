@@ -131,11 +131,13 @@ export function groupStandardFields(fields: StandardField[]): Record<string, Sta
 }
 
 export const MLS_BOARDS: Record<string, { name: string; state: string }> = {
-  KCRAR:  { name: 'KC Regional Association of Realtors', state: 'MO' },
-  KCREP:  { name: 'KC Regional — KS Side',               state: 'KS' },
-  SLMLS:  { name: 'St. Louis MLS',                       state: 'MO' },
-  BV:     { name: 'Bagnell Dam / Lake of the Ozarks',    state: 'MO' },
-  SWMO:   { name: 'SW Missouri MLS',                     state: 'MO' },
-  WICHITA:{ name: 'Wichita Area MLS',                    state: 'KS' },
-  CUSTOM: { name: 'Custom / Other',                      state: ''   },
+  'Heartland MLS':           { name: 'Heartland MLS (KC Metro)',          state: 'KS' },
+  'South Central Kansas MLS':{ name: 'South Central KS MLS (Wichita)',    state: 'KS' },
+  KCRAR:                     { name: 'KC Regional Association of Realtors',state: 'MO' },
+  KCREP:                     { name: 'KC Regional — KS Side',             state: 'KS' },
+  SLMLS:                     { name: 'St. Louis MLS',                     state: 'MO' },
+  BV:                        { name: 'Bagnell Dam / Lake of the Ozarks',  state: 'MO' },
+  SWMO:                      { name: 'SW Missouri MLS',                   state: 'MO' },
+  WICHITA:                   { name: 'Wichita Area MLS',                  state: 'KS' },
+  CUSTOM:                    { name: 'Custom / Other',                    state: ''   },
 };
