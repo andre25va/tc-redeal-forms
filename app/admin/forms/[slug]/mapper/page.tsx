@@ -335,6 +335,7 @@ export default function MapperPage() {
       is_signature: s.field_type === 'signature',
       is_initial: s.field_type === 'initial',
       required: false,
+      mls_board: profile?.mls_board ?? null,
     }))
     const { error } = await supabase.from('field_coordinates').upsert(fields, { onConflict: 'form_slug,field_key,page_num' })
     if (!error) {
@@ -541,6 +542,7 @@ export default function MapperPage() {
       form_slug: field.form_slug, field_key: field.field_key, page_num: field.page_num,
       x: field.x, y: field.y, width: field.width, height: field.height,
       field_type: field.field_type, is_signature: field.is_signature, is_initial: field.is_initial, required: field.required,
+      mls_board: profile?.mls_board ?? null,
     }, { onConflict: 'form_slug,field_key,page_num' })
     if (error) { setSaveStatus('Error: ' + error.message) } else {
       setAllFields(prev => {
@@ -557,11 +559,13 @@ export default function MapperPage() {
   const saveAllChanges = async () => {
     if (!pendingChanges.size) return
     setSaving(true)
+    const mlsBoardVal = profile?.mls_board ?? null
     const upserts = Array.from(pendingChanges.values()).map(f => ({
       form_slug: f.form_slug, field_key: f.field_key, page_num: f.page_num,
       x: Math.round(f.x * 100) / 100, y: Math.round(f.y * 100) / 100,
       width: Math.round(f.width * 100) / 100, height: Math.round(f.height * 100) / 100,
       field_type: f.field_type, is_signature: f.is_signature, is_initial: f.is_initial, required: f.required,
+      mls_board: mlsBoardVal,
     }))
     const { error } = await supabase.from('field_coordinates').upsert(upserts, { onConflict: 'form_slug,field_key,page_num' })
     if (error) { setSaveStatus('Error: ' + error.message) } else {
