@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { PDFDocument } from 'pdf-lib';
 
 export const runtime = 'nodejs';
-export const maxDuration = 300; // 5 min — 16 pages × ~10s each
+export const maxDuration = 300;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -35,19 +35,21 @@ function platformHashHint(platform: EsigPlatform): string {
   switch (platform) {
     case 'dotloop':    return 'Dotloop verification hashes look like: dtlp.us/XXXX-XXXX-XXXX';
     case 'docusign':   return 'DocuSign verification includes an envelope ID (UUID format) and/or a docusign.net URL';
-    case 'hellosign':  return 'HelloSign/Dropbox Sign verification includes a hellosign.com or dropboxsign.com URL';
-    case 'adobe-sign': return 'Adobe Sign verification includes an adobesign.com or echosign.com URL';
-    default:           return 'Look for any verification URL, hash, or code stamped near the signature block by the e-signature platform';
+    case 'hellosign':  return 'HelloSign/Dropbox Sign includes a hellosign.com or dropboxsign.com URL';
+    case 'adobe-sign': return 'Adobe Sign includes an adobesign.com or echosign.com URL';
+    default:           return 'Look for any verification URL, hash, or code stamped near the signature block';
   }
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type Severity = 'error' | 'warning' | 'review';
+
 interface PageResult {
   page: number;
   initials: {
-    seller: { present: boolean; value: string | null };
-    buyer:  { present: boolean; value: string | null };
+    seller: { present: boolean; value: string | null; confidence: number };
+    buyer:  { present: boolean; value: string | null; confidence: number };
   };
   signatures: Array<{
     label: string;
@@ -55,27 +57,28 @@ interface PageResult {
     signed: boolean;
     timestamp: string | null;
     esig_hash: string | null;
+    confidence: number;
   }>;
-  checkboxes: Array<{ label: string; checked: boolean }>;
-  filled_fields: Array<{ label: string; value: string; blank: boolean }>;
-  compliance_flags: Array<{ severity: 'error' | 'warning' | 'info'; message: string }>;
+  checkboxes: Array<{ label: string; checked: boolean; confidence: number }>;
+  filled_fields: Array<{ label: string; value: string; blank: boolean; confidence: number }>;
+  compliance_flags: Array<{ severity: Severity; message: string; confidence: number }>;
   parseError?: boolean;
 }
 
 interface Violation {
   page: number;
   message: string;
-  severity: 'error' | 'warning' | 'info';
+  severity: Severity;
 }
 
 interface ViolationBox {
   fieldId: string;
   page: number;
-  x: number;  // % of page width
-  y: number;  // % of page height (y=0 at top)
+  x: number;
+  y: number;
   w: number;
   h: number;
-  severity: 'error' | 'warning' | 'info';
+  severity: Severity;
   type: string;
   label: string;
 }
@@ -92,11 +95,22 @@ interface FieldCoord {
   is_initial: boolean;
 }
 
-// Standard US Letter page dimensions in PDF points (72 dpi)
 const PAGE_W = 612;
 const PAGE_H = 792;
 
-// ─── Analyze a single page PDF with GPT-4o ────────────────────────────────────
+// Confidence threshold — below this, downgrade to 'review' instead of error/warning
+const REVIEW_THRESHOLD = 0.70;
+
+function toSeverity(rawSeverity: string, confidence: number): Severity {
+  // If GPT isn't sure, flag for human review regardless of the severity it chose
+  if (confidence < REVIEW_THRESHOLD) return 'review';
+  if (rawSeverity === 'error') return 'error';
+  if (rawSeverity === 'warning') return 'warning';
+  if (rawSeverity === 'review') return 'review';
+  return 'warning';
+}
+
+// ─── Analyze a single page with GPT-4o ───────────────────────────────────────
 
 async function analyzePageWithGPT4o(
   pageBase64: string,
@@ -113,48 +127,58 @@ async function analyzePageWithGPT4o(
 
   const prompt = `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
 
-This is an electronically signed PDF processed through ${platformLabel}.
-${platformLabel} overlays signature/initial stamps and verification codes on top of the base PDF.
+This PDF was electronically signed via ${platformLabel}.
 ${hashHint}
 
 ${initialsRequired
-  ? `INITIALS REQUIRED ON THIS PAGE: Look for ${sellerCount} seller initial(s) and ${buyerCount} buyer initial(s). They appear as small stamped boxes, typically in the bottom margin or footer.`
+  ? `INITIALS REQUIRED: Look for ${sellerCount} seller and ${buyerCount} buyer initial stamp(s), typically in footer/bottom margin.`
   : `Initials are NOT required on this page.`}
 
-Return ONLY valid JSON, no markdown fences, no explanation:
+Return ONLY valid JSON, no markdown fences:
 
 {
   "page": ${pageNumber},
   "initials": {
-    "seller": { "present": boolean, "value": "initials string or null" },
-    "buyer":  { "present": boolean, "value": "initials string or null" }
+    "seller": { "present": boolean, "value": "initials or null", "confidence": 0.0-1.0 },
+    "buyer":  { "present": boolean, "value": "initials or null", "confidence": 0.0-1.0 }
   },
   "signatures": [
     {
-      "label": "description of signature block",
+      "label": "description",
       "signer": "name or null",
       "signed": boolean,
-      "timestamp": "timestamp string or null",
-      "esig_hash": "verification hash/URL/code or null"
+      "timestamp": "string or null",
+      "esig_hash": "verification code/URL or null",
+      "confidence": 0.0-1.0
     }
   ],
   "checkboxes": [
-    { "label": "checkbox label text", "checked": boolean }
+    { "label": "text", "checked": boolean, "confidence": 0.0-1.0 }
   ],
   "filled_fields": [
-    { "label": "field label", "value": "filled value or empty string", "blank": boolean }
+    { "label": "field label", "value": "value or empty", "blank": boolean, "confidence": 0.0-1.0 }
   ],
   "compliance_flags": [
-    { "severity": "error | warning | info", "message": "description" }
+    { "severity": "error|warning|review", "message": "description", "confidence": 0.0-1.0 }
   ]
 }
 
+Severity guide:
+- "error"   = definite violation (missing required sig/initials, unsigned block)
+- "warning" = soft issue (optional blank, unusual value)
+- "review"  = you are unsure — handwriting unclear, partially filled, ambiguous checkbox, value hard to read
+
+Confidence guide (0.0–1.0):
+- 1.0 = crystal clear, no ambiguity
+- 0.7–0.9 = mostly clear, minor uncertainty
+- 0.5–0.7 = uncertain — use severity "review"
+- < 0.5 = very unclear — still report but use severity "review"
+
 Rules:
-- For checkboxes: look at the visual image carefully — a filled/darkened box is checked, empty outline is unchecked
-- For signatures: an e-signature stamp with a verification hash/code = signed; blank line = unsigned
-- For fields: any value including "N/A", "0", dashes = NOT blank; only truly empty = blank
-- Flag missing initials as "error", blank optional fields as "warning"
-- Do not flag unchecked checkboxes as errors unless the contract logic requires one of a pair to be checked`;
+- Filled checkbox (darkened/checked box) = checked; empty outline = unchecked
+- E-sig stamp + verification code = signed; blank line = unsigned
+- N/A, 0, dashes = NOT blank; truly empty lines/boxes = blank
+- Do not flag unchecked checkboxes as errors unless both-option logic requires it`;
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -186,9 +210,12 @@ Rules:
     console.error(`GPT-4o error on page ${pageNumber}:`, err);
     return {
       page: pageNumber, parseError: true,
-      initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } },
+      initials: {
+        seller: { present: false, value: null, confidence: 0 },
+        buyer:  { present: false, value: null, confidence: 0 },
+      },
       signatures: [], checkboxes: [], filled_fields: [],
-      compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}` }],
+      compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}`, confidence: 1 }],
     };
   }
 
@@ -197,19 +224,32 @@ Rules:
 
   try {
     const clean = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    const parsed = JSON.parse(clean);
+
+    // Ensure confidence fields exist (GPT might omit them)
+    if (!parsed.initials?.seller?.confidence) parsed.initials.seller.confidence = 0.9;
+    if (!parsed.initials?.buyer?.confidence) parsed.initials.buyer.confidence = 0.9;
+    for (const s of parsed.signatures ?? []) if (!s.confidence) s.confidence = 0.9;
+    for (const c of parsed.checkboxes ?? []) if (!c.confidence) c.confidence = 0.9;
+    for (const f of parsed.filled_fields ?? []) if (!f.confidence) f.confidence = 0.9;
+    for (const flag of parsed.compliance_flags ?? []) if (!flag.confidence) flag.confidence = 0.9;
+
+    return parsed as PageResult;
   } catch (e) {
     console.error(`JSON parse error on page ${pageNumber}:`, e, '\nRaw:', raw.slice(0, 300));
     return {
       page: pageNumber, parseError: true,
-      initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } },
+      initials: {
+        seller: { present: false, value: null, confidence: 0 },
+        buyer:  { present: false, value: null, confidence: 0 },
+      },
       signatures: [], checkboxes: [], filled_fields: [],
-      compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response' }],
+      compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response', confidence: 1 }],
     };
   }
 }
 
-// ─── Aggregate results across all pages ──────────────────────────────────────
+// ─── Aggregate results ────────────────────────────────────────────────────────
 
 function aggregateResults(
   pageResults: PageResult[],
@@ -219,6 +259,7 @@ function aggregateResults(
 ) {
   const errors:   Violation[] = [];
   const warnings: Violation[] = [];
+  const reviews:  Violation[] = [];
 
   let totalSigs = 0, signedSigs = 0;
   let totalFields = 0, blankFields = 0;
@@ -228,6 +269,7 @@ function aggregateResults(
   const initialsGrid: Array<{
     page: number; seller: string | null; buyer: string | null;
     sellerOk: boolean; buyerOk: boolean;
+    sellerReview: boolean; buyerReview: boolean;
   }> = [];
 
   for (const page of pageResults) {
@@ -236,19 +278,29 @@ function aggregateResults(
       continue;
     }
 
-    // Initials
     const needsInitials = initialsPages.length === 0 || initialsPages.includes(page.page);
+
+    // Initials — apply confidence threshold
+    const sellerSev = toSeverity('error', page.initials.seller.confidence);
+    const buyerSev  = toSeverity('error', page.initials.buyer.confidence);
     initialsGrid.push({
-      page: page.page,
-      seller: page.initials.seller.value,
-      buyer:  page.initials.buyer.value,
-      sellerOk: !needsInitials || page.initials.seller.present,
-      buyerOk:  !needsInitials || page.initials.buyer.present,
+      page:         page.page,
+      seller:       page.initials.seller.value,
+      buyer:        page.initials.buyer.value,
+      sellerOk:     !needsInitials || page.initials.seller.present,
+      buyerOk:      !needsInitials || page.initials.buyer.present,
+      sellerReview: sellerSev === 'review',
+      buyerReview:  buyerSev  === 'review',
     });
-    if (needsInitials && !page.initials.seller.present)
-      errors.push({ page: page.page, message: 'Seller initials missing', severity: 'error' });
-    if (needsInitials && !page.initials.buyer.present)
-      errors.push({ page: page.page, message: 'Buyer initials missing', severity: 'error' });
+
+    if (needsInitials && !page.initials.seller.present) {
+      const list = sellerSev === 'review' ? reviews : errors;
+      list.push({ page: page.page, message: 'Seller initials missing', severity: sellerSev });
+    }
+    if (needsInitials && !page.initials.buyer.present) {
+      const list = buyerSev === 'review' ? reviews : errors;
+      list.push({ page: page.page, message: 'Buyer initials missing', severity: buyerSev });
+    }
 
     // Signatures
     for (const sig of page.signatures) {
@@ -263,7 +315,9 @@ function aggregateResults(
           });
         }
       } else {
-        errors.push({ page: page.page, message: `Unsigned: "${sig.label}"`, severity: 'error' });
+        const sev = toSeverity('error', sig.confidence);
+        const list = sev === 'review' ? reviews : errors;
+        list.push({ page: page.page, message: `Unsigned: "${sig.label}"`, severity: sev });
       }
     }
 
@@ -276,21 +330,24 @@ function aggregateResults(
       totalFields++;
       if (field.blank) {
         blankFields++;
-        warnings.push({ page: page.page, message: `Blank field: "${field.label}"`, severity: 'warning' });
+        const sev = toSeverity('warning', field.confidence);
+        const list = sev === 'review' ? reviews : warnings;
+        list.push({ page: page.page, message: `Blank field: "${field.label}"`, severity: sev });
       }
     }
 
-    // AI flags
+    // AI compliance flags
     for (const flag of page.compliance_flags) {
-      const list = flag.severity === 'error' ? errors : warnings;
-      list.push({ page: page.page, message: flag.message, severity: flag.severity });
+      const sev = toSeverity(flag.severity, flag.confidence);
+      const list = sev === 'error' ? errors : sev === 'review' ? reviews : warnings;
+      list.push({ page: page.page, message: flag.message, severity: sev });
     }
   }
 
   const isCompliant = errors.length === 0;
 
   return {
-    status: isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT',
+    status: isCompliant ? (reviews.length > 0 ? 'NEEDS-REVIEW' : 'COMPLIANT') : 'NON-COMPLIANT',
     method: 'vision-per-page-gpt4o',
     platform,
     platformLabel: PLATFORM_LABELS[platform],
@@ -302,15 +359,16 @@ function aggregateResults(
       fieldsFilled:            `${totalFields - blankFields}/${totalFields}`,
       criticalErrors:          errors.length,
       warnings:                warnings.length,
+      reviewItems:             reviews.length,
       esigHashes,
     },
     initialsGrid,
-    violations: [...errors, ...warnings],
+    violations: [...errors, ...warnings, ...reviews],
     pages: pageResults,
   };
 }
 
-// ─── Coordinate matching — map violations → red boxes on PDF ─────────────────
+// ─── Map violations → coordinate boxes ───────────────────────────────────────
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -321,7 +379,7 @@ function matchViolationsToCoords(
   coordsByPage: Record<number, FieldCoord[]>
 ): ViolationBox[] {
   const boxes: ViolationBox[] = [];
-  const usedKeys = new Set<string>(); // avoid double-boxing same field
+  const usedKeys = new Set<string>();
 
   for (const v of violations) {
     const pageCoords = coordsByPage[v.page] ?? [];
@@ -331,25 +389,18 @@ function matchViolationsToCoords(
     if (v.message === 'Seller initials missing' || v.message === 'Buyer initials missing') {
       const isSeller = v.message.startsWith('Seller');
       shortLabel = isSeller ? 'INIT-S' : 'INIT-B';
-      // Find initial field for correct party on this page
       matched = pageCoords.find(c =>
         (c.is_initial || c.field_type === 'initial') &&
         c.field_key.includes(isSeller ? 'seller' : 'buyer') &&
         !usedKeys.has(c.field_key)
+      ) ?? pageCoords.find(c =>
+        (c.is_initial || c.field_type === 'initial') && !usedKeys.has(c.field_key)
       ) ?? null;
-      // Fallback: any initial field on this page
-      if (!matched) {
-        matched = pageCoords.find(c =>
-          (c.is_initial || c.field_type === 'initial') &&
-          !usedKeys.has(c.field_key)
-        ) ?? null;
-      }
 
     } else if (v.message.startsWith('Unsigned:')) {
-      shortLabel = 'SIG';
+      shortLabel = v.severity === 'review' ? 'SIG?' : 'SIG';
       const sigLabel = (v.message.match(/Unsigned: "(.+?)"/) ?? [])[1] ?? '';
       const sigNorm = normalize(sigLabel);
-      // Try to match signature field by label similarity
       let best: FieldCoord | null = null;
       let bestScore = 0;
       for (const c of pageCoords) {
@@ -362,12 +413,11 @@ function matchViolationsToCoords(
         if (sigNorm.includes('buyer') && keyNorm.includes('buyer')) score += 3;
         if (score > bestScore) { bestScore = score; best = c; }
       }
-      // Fallback: first unmatched signature on this page
       if (!best) best = pageCoords.find(c => (c.is_signature || c.field_type === 'signature') && !usedKeys.has(c.field_key)) ?? null;
       matched = best;
 
     } else if (v.message.startsWith('Blank field:')) {
-      shortLabel = 'BLANK';
+      shortLabel = v.severity === 'review' ? 'BLANK?' : 'BLANK';
       const rawLabel = (v.message.match(/Blank field: "(.+?)"/) ?? [])[1] ?? '';
       const labelNorm = normalize(rawLabel);
       let best: FieldCoord | null = null;
@@ -376,11 +426,9 @@ function matchViolationsToCoords(
         if (c.is_signature || c.is_initial || c.field_type === 'signature' || c.field_type === 'initial') continue;
         if (usedKeys.has(c.field_key)) continue;
         const keyNorm = normalize(c.field_key);
-        // Score based on substring overlap
         let score = 0;
         if (labelNorm.length >= 3 && keyNorm.includes(labelNorm.slice(0, Math.min(6, labelNorm.length)))) score += labelNorm.length;
         if (keyNorm.length >= 3 && labelNorm.includes(keyNorm.slice(0, Math.min(6, keyNorm.length)))) score += keyNorm.length;
-        // Word-level match: split label on spaces and check if any word appears in key
         const words = rawLabel.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
         for (const word of words) {
           if (keyNorm.includes(normalize(word))) score += word.length;
@@ -390,9 +438,9 @@ function matchViolationsToCoords(
       if (bestScore >= 3) matched = best;
 
     } else {
-      // Generic AI flag — try to find any field on the page not already matched
-      shortLabel = v.severity === 'error' ? 'ERR' : 'WARN';
-      // Don't auto-match generic flags to avoid false positives
+      // Generic AI flag — label with severity
+      shortLabel = v.severity === 'error' ? 'ERR' : v.severity === 'review' ? 'REVIEW' : 'WARN';
+      // Don't auto-match generic flags — too many false positives
     }
 
     if (matched) {
@@ -403,7 +451,7 @@ function matchViolationsToCoords(
         x:        (matched.x / PAGE_W) * 100,
         y:        (matched.y / PAGE_H) * 100,
         w:        (matched.width / PAGE_W) * 100,
-        h:        Math.max(matched.height / PAGE_H * 100, 1.5), // min visible height
+        h:        Math.max(matched.height / PAGE_H * 100, 1.5),
         severity: v.severity,
         type:     matched.field_type,
         label:    shortLabel,
@@ -424,19 +472,16 @@ export async function POST(req: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'No PDF uploaded' }, { status: 400 });
 
-    // Load PDF bytes
     const arrayBuffer = await file.arrayBuffer();
     const pdfBytes = new Uint8Array(arrayBuffer);
 
-    // Detect e-signature platform from raw text
     const textSample = Buffer.from(pdfBytes).toString('latin1').slice(0, 50000);
     const platform = detectEsigPlatform(textSample);
 
-    // Load and split into pages with pdf-lib
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     const numPages = pdfDoc.getPageCount();
 
-    // Fingerprint — match template
+    // Match template
     let matchedSlug = formSlug;
     if (!matchedSlug) {
       const { data: templates } = await supabase
@@ -464,7 +509,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Load field coordinates for this template (used for red box overlay)
+    // Load field coordinates
     const coordsByPage: Record<number, FieldCoord[]> = {};
     if (matchedSlug) {
       const { data: coords } = await supabase
@@ -481,7 +526,7 @@ export async function POST(req: NextRequest) {
 
     const initialsPages: number[] = formProfile?.initials_pages ?? [];
 
-    // Split PDF and analyze each page
+    // Analyze each page
     const pageResults: PageResult[] = [];
     for (let i = 0; i < numPages; i++) {
       const singlePageDoc = await PDFDocument.create();
@@ -496,10 +541,8 @@ export async function POST(req: NextRequest) {
       if (i < numPages - 1) await new Promise(r => setTimeout(r, 300));
     }
 
-    // Aggregate
     const report = aggregateResults(pageResults, matchedSlug, initialsPages, platform);
 
-    // Map violations → coordinate boxes for PDF overlay
     const violationBoxes = Object.keys(coordsByPage).length > 0
       ? matchViolationsToCoords(report.violations, coordsByPage)
       : [];
@@ -510,8 +553,7 @@ export async function POST(req: NextRequest) {
       numPages,
       violationBoxes,
       hasCoordinates: Object.keys(coordsByPage).length > 0,
-      // Legacy compat alias
-      isDotloop: platform === 'dotloop',
+      isDotloop: platform === 'dotloop', // legacy alias
     });
 
   } catch (err: any) {

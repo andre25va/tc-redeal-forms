@@ -126,6 +126,7 @@ function ViolationsPanel({ violations, currentPage, onPageClick, hasCoordinates 
 }) {
   const errors   = violations.filter(v => v.severity === 'error');
   const warnings = violations.filter(v => v.severity === 'warning');
+  const reviews  = violations.filter(v => v.severity === 'review' || v.severity === 'info');
 
   if (violations.length === 0) return (
     <div style={{ borderRadius: 10, border: '1px solid #bbf7d0', background: '#f0fdf4', padding: '10px 12px' }}>
@@ -155,9 +156,16 @@ function ViolationsPanel({ violations, currentPage, onPageClick, hasCoordinates 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {hasCoordinates && (
-        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 1, border: '2px solid #ef4444', display: 'inline-block' }} />
-          Red/amber boxes shown on PDF where fields are missing
+        <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 1, border: '2px solid #ef4444', display: 'inline-block' }} /> Error
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 1, border: '2px solid #f59e0b', display: 'inline-block' }} /> Warning
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 1, border: '2px solid #3b82f6', display: 'inline-block' }} /> Review
+          </span>
         </p>
       )}
       {errors.length > 0 && (
@@ -174,6 +182,14 @@ function ViolationsPanel({ violations, currentPage, onPageClick, hasCoordinates 
             {warnings.length} Warning{warnings.length !== 1 ? 's' : ''}
           </p>
           {renderGroup(warnings, '#92400e', '#fffbeb', '#fde68a', <AlertTriangle size={12} color="#d97706" />)}
+        </div>
+      )}
+      {reviews.length > 0 && (
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#2563eb', marginBottom: 4 }}>
+            {reviews.length} Need{reviews.length !== 1 ? '' : 's'} Review
+          </p>
+          {renderGroup(reviews, '#1d4ed8', '#eff6ff', '#bfdbfe', <AlertTriangle size={12} color="#3b82f6" />)}
         </div>
       )}
     </div>
@@ -238,7 +254,9 @@ export default function CompliancePage() {
 
   if (vision) {
     const { summary, initialsGrid, violations } = vision;
-    const isCompliant   = vision.status === 'COMPLIANT';
+    const isCompliant    = vision.status === 'COMPLIANT';
+    const needsReview    = vision.status === 'NEEDS-REVIEW';
+    const reviewCount    = (summary as any).reviewItems ?? violations.filter((v: VisionViolation) => v.severity === 'review').length;
     const platform      = (vision.platform ?? 'unknown') as EsigPlatform;
     const platformLabel = vision.platformLabel ?? 'E-Signature';
     const hasCoordinates = (vision as any).hasCoordinates ?? false;
@@ -281,6 +299,8 @@ export default function CompliancePage() {
             {platformBadge(platform, platformLabel)}
             {isCompliant
               ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#f0fdf4', color: '#16a34a', fontSize: 12, fontWeight: 700 }}><CheckCircle2 size={12} /> COMPLIANT</span>
+              : needsReview
+              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#eff6ff', color: '#2563eb', fontSize: 12, fontWeight: 700 }}><AlertTriangle size={12} /> NEEDS REVIEW</span>
               : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700 }}><XCircle size={12} /> NON-COMPLIANT</span>
             }
             <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#ffffff', cursor: 'pointer', fontSize: 12, fontWeight: 500, color: '#6b7280' }}>
@@ -292,12 +312,17 @@ export default function CompliancePage() {
         {/* ── Sub-banner ── */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10, padding: '6px 16px', flexWrap: 'wrap',
-          background: isCompliant ? '#f0fdf4' : '#fef2f2',
-          borderBottom: `1px solid ${isCompliant ? '#bbf7d0' : '#fecaca'}`,
+          background: isCompliant ? '#f0fdf4' : needsReview ? '#eff6ff' : '#fef2f2',
+          borderBottom: `1px solid ${isCompliant ? '#bbf7d0' : needsReview ? '#bfdbfe' : '#fecaca'}`,
           fontSize: 12,
         }}>
-          <span style={{ fontWeight: 700, color: isCompliant ? '#15803d' : '#dc2626' }}>
-            {isCompliant ? '✓ COMPLIANT' : `✗ NON-COMPLIANT — ${summary.criticalErrors} error${summary.criticalErrors !== 1 ? 's' : ''}`}
+          <span style={{ fontWeight: 700, color: isCompliant ? '#15803d' : needsReview ? '#1d4ed8' : '#dc2626' }}>
+            {isCompliant
+              ? '✓ COMPLIANT'
+              : needsReview
+              ? `◎ NEEDS REVIEW — ${reviewCount} item${reviewCount !== 1 ? 's' : ''} flagged for human review`
+              : `✗ NON-COMPLIANT — ${summary.criticalErrors} error${summary.criticalErrors !== 1 ? 's' : ''}`
+            }
           </span>
           <span style={{ color: '#d1d5db' }}>·</span>
           <span style={{ color: '#6b7280' }}>{summary.pagesWithBothInitials}/{summary.totalPages} pages initialed</span>
@@ -329,29 +354,43 @@ export default function CompliancePage() {
                 {
                   label: 'Pages initialed',
                   value: `${summary.pagesWithBothInitials}/${summary.totalPages}`,
-                  ok: summary.pagesWithBothInitials === summary.totalPages,
+                  status: summary.pagesWithBothInitials === summary.totalPages ? 'ok' : 'error',
                 },
                 {
                   label: 'Signatures',
                   value: summary.signaturesComplete,
-                  ok: summary.signaturesComplete.split('/')[0] === summary.signaturesComplete.split('/')[1],
+                  status: summary.signaturesComplete.split('/')[0] === summary.signaturesComplete.split('/')[1] ? 'ok' : 'error',
                 },
                 {
                   label: 'Fields filled',
                   value: summary.fieldsFilled,
-                  ok: summary.criticalErrors === 0,
+                  status: summary.criticalErrors === 0 ? 'ok' : 'error',
                 },
                 {
                   label: `${platformLabel} hashes`,
                   value: String(esigHashes.length),
-                  ok: esigHashes.length > 0,
+                  status: esigHashes.length > 0 ? 'ok' : 'warning',
                 },
-              ].map(s => (
-                <div key={s.label} style={{ borderRadius: 8, padding: '8px 10px', background: '#fff', border: `1px solid ${s.ok ? '#d1fae5' : '#fee2e2'}` }}>
-                  <p style={{ fontSize: 18, fontWeight: 700, color: s.ok ? '#16a34a' : '#dc2626', margin: 0 }}>{s.value}</p>
-                  <p style={{ fontSize: 10, color: '#9ca3af', margin: 0 }}>{s.label}</p>
-                </div>
-              ))}
+                {
+                  label: 'Needs review',
+                  value: String(reviewCount),
+                  status: reviewCount === 0 ? 'ok' : 'review',
+                },
+                {
+                  label: 'Warnings',
+                  value: String(summary.warnings ?? 0),
+                  status: (summary.warnings ?? 0) === 0 ? 'ok' : 'warning',
+                },
+              ].map(s => {
+                const borderColor = s.status === 'ok' ? '#d1fae5' : s.status === 'review' ? '#bfdbfe' : s.status === 'warning' ? '#fde68a' : '#fee2e2';
+                const textColor   = s.status === 'ok' ? '#16a34a' : s.status === 'review' ? '#2563eb' : s.status === 'warning' ? '#d97706' : '#dc2626';
+                return (
+                  <div key={s.label} style={{ borderRadius: 8, padding: '8px 10px', background: '#fff', border: `1px solid ${borderColor}` }}>
+                    <p style={{ fontSize: 18, fontWeight: 700, color: textColor, margin: 0 }}>{s.value}</p>
+                    <p style={{ fontSize: 10, color: '#9ca3af', margin: 0 }}>{s.label}</p>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Initials grid */}

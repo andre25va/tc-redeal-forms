@@ -88,11 +88,12 @@ function drawMockPDFPage(canvas: HTMLCanvasElement | null, page: number) {
 
 // ─── Severity styles ──────────────────────────────────────────────────────────
 
-function severityStyle(severity?: 'error' | 'warning' | 'info') {
+function severityStyle(severity?: 'error' | 'warning' | 'review' | 'info') {
   if (severity === 'warning') {
     return { border: '#f59e0b', bg: 'rgba(245,158,11,0.12)', badge: '#f59e0b', badgeText: '#fff' };
   }
-  if (severity === 'info') {
+  if (severity === 'review' || severity === 'info') {
+    // Blue = needs human review — GPT was uncertain
     return { border: '#3b82f6', bg: 'rgba(59,130,246,0.10)', badge: '#3b82f6', badgeText: '#fff' };
   }
   // default = error
@@ -198,14 +199,20 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
   const pageMissing       = missingFields.filter(f => f.page === currentPage);
   const pageErrors        = pageMissing.filter(f => !f.severity || f.severity === 'error');
   const pageWarnings      = pageMissing.filter(f => f.severity === 'warning');
+  const pageReviews       = pageMissing.filter(f => f.severity === 'review' || f.severity === 'info');
   const effectiveTotalPages = pdfDoc ? pdfDoc.numPages : totalPages;
 
-  // Per-page issue counts for nav dot colors
-  const pageIssueMap: Record<number, 'error' | 'warning' | null> = {};
+  // Per-page issue counts for nav dot colors (error > review > warning)
+  const pageIssueMap: Record<number, 'error' | 'warning' | 'review' | null> = {};
   for (const f of missingFields) {
     const existing = pageIssueMap[f.page];
-    if (!existing) pageIssueMap[f.page] = f.severity === 'warning' ? 'warning' : 'error';
-    else if (existing === 'warning' && f.severity !== 'warning') pageIssueMap[f.page] = 'error';
+    const sev = f.severity ?? 'error';
+    if (!existing) {
+      pageIssueMap[f.page] = sev === 'warning' ? 'warning' : sev === 'review' ? 'review' : 'error';
+    } else if (existing !== 'error') {
+      if (sev === 'error') pageIssueMap[f.page] = 'error';
+      else if (sev === 'review' && existing === 'warning') pageIssueMap[f.page] = 'review';
+    }
   }
 
   return (
@@ -225,12 +232,17 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {pageErrors.length > 0 && (
             <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fee2e2', color: '#dc2626' }}>
-              {pageErrors.length} error{pageErrors.length !== 1 ? 's' : ''} on page
+              {pageErrors.length} error{pageErrors.length !== 1 ? 's' : ''}
             </span>
           )}
           {pageWarnings.length > 0 && (
             <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#fffbeb', color: '#d97706' }}>
               {pageWarnings.length} warning{pageWarnings.length !== 1 ? 's' : ''}
+            </span>
+          )}
+          {pageReviews.length > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#eff6ff', color: '#2563eb' }}>
+              {pageReviews.length} review{pageReviews.length !== 1 ? 's' : ''}
             </span>
           )}
           {pdfUrl && (
@@ -259,6 +271,10 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 12, height: 12, borderRadius: 2, border: '2px solid #f59e0b', background: 'rgba(245,158,11,0.15)', display: 'inline-block' }} />
             Warning
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 2, border: '2px solid #3b82f6', background: 'rgba(59,130,246,0.12)', display: 'inline-block' }} />
+            Needs Review
           </span>
           {pageMissing.length === 0 && <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ No issues on this page</span>}
         </div>
@@ -330,12 +346,14 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
             const issue = pageIssueMap[p];
             const isActive = p === currentPage;
             const bg = isActive ? '#3b82f6'
-              : issue === 'error' ? '#fee2e2'
+              : issue === 'error'   ? '#fee2e2'
               : issue === 'warning' ? '#fffbeb'
+              : issue === 'review'  ? '#eff6ff'
               : '#e5e7eb';
             const color = isActive ? '#fff'
-              : issue === 'error' ? '#dc2626'
+              : issue === 'error'   ? '#dc2626'
               : issue === 'warning' ? '#d97706'
+              : issue === 'review'  ? '#2563eb'
               : '#6b7280';
             return (
               <button
@@ -353,7 +371,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
                   <span style={{
                     position: 'absolute', top: -3, right: -3,
                     width: 7, height: 7, borderRadius: '50%',
-                    background: issue === 'error' ? '#dc2626' : '#f59e0b',
+                    background: issue === 'error' ? '#dc2626' : issue === 'review' ? '#2563eb' : '#f59e0b',
                     border: '1.5px solid #fff',
                   }} />
                 )}

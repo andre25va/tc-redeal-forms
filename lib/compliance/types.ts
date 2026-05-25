@@ -2,6 +2,13 @@
 
 export type ViewPage = 'upload' | 'library' | 'report';
 
+/** Three-tier severity:
+ *  error   = definite violation (missing required sig/initials, unsigned)
+ *  warning = soft rule (optional blank, unusual value)
+ *  review  = GPT uncertain — handwriting unclear, ambiguous checkbox, partial value
+ */
+export type Severity = 'error' | 'warning' | 'review';
+
 export interface MissingField {
   fieldId: string;
   page: number;
@@ -9,8 +16,8 @@ export interface MissingField {
   y: number;  // percentage of page height (0–100), y=0 at top
   w: number;  // percentage of page width
   h: number;  // percentage of page height
-  type: 'initial' | 'signature' | 'required' | 'blank' | 'warning' | 'text' | 'date' | 'number' | 'checkbox';
-  severity?: 'error' | 'warning' | 'info';
+  type: 'initial' | 'signature' | 'required' | 'blank' | 'warning' | 'text' | 'date' | 'number' | 'checkbox' | 'review';
+  severity?: Severity;
   label?: string;  // short human-readable label for badge
 }
 
@@ -27,5 +34,5 @@ export interface ComplianceRule {
   rule_type: 'required' | 'required_if' | 'not_blank_if' | 'date_format';
   condition?: string;
   message: string;
-  severity: 'error' | 'warning' | 'info';
+  severity: Severity;
 }
