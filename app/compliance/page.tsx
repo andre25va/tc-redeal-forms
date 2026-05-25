@@ -2,13 +2,14 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import { Download, BookOpen, CheckSquare, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Download, BookOpen, CheckSquare, CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronRight, ShieldCheck, Clock } from 'lucide-react';
 
 import UploadPanel, {
   CheckResultPayload, VisionCheckResult, VisionViolation, InitialsGridRow, EsigHash, EsigPlatform, platformBadge,
 } from '@/components/compliance/UploadPanel';
 import LibraryView from '@/components/compliance/LibraryView';
 import { ViewPage, MissingField } from '@/lib/compliance/types';
+import CheckHistoryView from '@/components/compliance/CheckHistoryView';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 const PDFViewer = dynamic(() => import('@/components/compliance/PDFViewer'), { ssr: false });
@@ -268,14 +269,14 @@ function CompliancePageInner() {
   const NavBar = ({ active }: { active: ViewPage }) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        {(['upload', 'library'] as ViewPage[]).map(v => (
+        {(['upload', 'history', 'library'] as ViewPage[]).map(v => (
           <button key={v} onClick={() => setView(v)} style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8,
             border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
             background: active === v ? '#eff6ff' : 'transparent',
             color: active === v ? '#1d4ed8' : '#6b7280',
           }}>
-            {v === 'upload' ? <><CheckSquare size={14} /> Check</> : <><BookOpen size={14} /> Library</>}
+            {v === 'upload' ? <><CheckSquare size={14} /> Check</> : v === 'history' ? <><Clock size={14} /> History</> : <><BookOpen size={14} /> Library</>}
           </button>
         ))}
       </div>
@@ -339,6 +340,13 @@ function CompliancePageInner() {
           }
         }}
       />
+    </div>
+  );
+
+  if (view === 'history') return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f9fafb', fontFamily: 'sans-serif' }}>
+      <NavBar active="history" />
+      <CheckHistoryView />
     </div>
   );
 
