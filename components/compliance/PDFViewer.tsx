@@ -199,7 +199,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
   const pageMissing       = missingFields.filter(f => f.page === currentPage);
   const pageErrors        = pageMissing.filter(f => !f.severity || f.severity === 'error');
   const pageWarnings      = pageMissing.filter(f => f.severity === 'warning');
-  const pageReviews       = pageMissing.filter(f => f.severity === 'review' || f.severity === 'info');
+  const pageReviews       = pageMissing.filter(f => f.severity === 'review');
   const effectiveTotalPages = pdfDoc ? pdfDoc.numPages : totalPages;
 
   // Per-page issue counts for nav dot colors (error > review > warning)
