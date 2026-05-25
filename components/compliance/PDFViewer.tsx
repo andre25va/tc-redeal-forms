@@ -120,6 +120,14 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
   const [renderError, setRenderError] = useState<string | null>(null);
   const [rendering, setRendering]     = useState(false);
   const [docLabel, setDocLabel]       = useState<string>('');
+  const [zoomLevel, setZoomLevel]     = useState<number>(1.0);
+
+  const ZOOM_STEP = 0.25;
+  const ZOOM_MIN  = 0.5;
+  const ZOOM_MAX  = 3.0;
+  const zoomIn  = () => setZoomLevel(z => Math.min(+(z + ZOOM_STEP).toFixed(2), ZOOM_MAX));
+  const zoomOut = () => setZoomLevel(z => Math.max(+(z - ZOOM_STEP).toFixed(2), ZOOM_MIN));
+  const zoomReset = () => setZoomLevel(1.0);
 
   useEffect(() => {
     if (!pdfFile && !pdfUrl) {
@@ -172,7 +180,9 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
       const page = await pdfDoc.getPage(currentPage);
       const containerWidth = containerRef.current?.clientWidth ?? 600;
       const baseViewport = page.getViewport({ scale: 1 });
-      const scale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
+      // fitScale fills the container; multiply by zoomLevel for user zoom
+      const fitScale = Math.min((containerWidth - 32) / baseViewport.width, 2.0);
+      const scale = fitScale * zoomLevel;
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const viewport = page.getViewport({ scale: scale * dpr });
 
@@ -192,7 +202,7 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
     } finally {
       setRendering(false);
     }
-  }, [pdfDoc, currentPage]);
+  }, [pdfDoc, currentPage, zoomLevel]);
 
   useEffect(() => { renderPage(); }, [renderPage]);
 
@@ -245,6 +255,27 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
               {pageReviews.length} review{pageReviews.length !== 1 ? 's' : ''}
             </span>
           )}
+          {/* Zoom controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: '#e5e7eb', borderRadius: 6, padding: '2px 4px' }}>
+            <button
+              onClick={zoomOut}
+              disabled={zoomLevel <= ZOOM_MIN}
+              title="Zoom out"
+              style={{ width: 24, height: 24, border: 'none', background: 'transparent', cursor: zoomLevel <= ZOOM_MIN ? 'not-allowed' : 'pointer', color: zoomLevel <= ZOOM_MIN ? '#9ca3af' : '#374151', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4 }}
+            >−</button>
+            <button
+              onClick={zoomReset}
+              title="Reset zoom"
+              style={{ minWidth: 40, height: 24, border: 'none', background: zoomLevel === 1.0 ? 'transparent' : '#fff', cursor: 'pointer', color: '#374151', fontSize: 11, fontWeight: 600, borderRadius: 4, padding: '0 4px' }}
+            >{Math.round(zoomLevel * 100)}%</button>
+            <button
+              onClick={zoomIn}
+              disabled={zoomLevel >= ZOOM_MAX}
+              title="Zoom in"
+              style={{ width: 24, height: 24, border: 'none', background: 'transparent', cursor: zoomLevel >= ZOOM_MAX ? 'not-allowed' : 'pointer', color: zoomLevel >= ZOOM_MAX ? '#9ca3af' : '#374151', fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4 }}
+            >+</button>
+          </div>
+
           {pdfUrl && (
             <a href={pdfUrl} download target="_blank" rel="noreferrer"
               style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', padding: '2px 8px', border: '1px solid #bfdbfe', borderRadius: 6, background: '#eff6ff' }}
