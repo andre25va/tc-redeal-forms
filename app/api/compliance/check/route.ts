@@ -63,6 +63,9 @@ interface PageResult {
   filled_fields: Array<{ label: string; value: string; blank: boolean; confidence: number }>;
   compliance_flags: Array<{ severity: Severity; message: string; confidence: number }>;
   parseError?: boolean;
+  // DEBUG fields
+  _rawGptResponse?: string;
+  _confidenceBefore?: { sellerConf: number; buyerConf: number };
 }
 
 interface Violation {
@@ -102,7 +105,6 @@ const PAGE_H = 792;
 const REVIEW_THRESHOLD = 0.70;
 
 function toSeverity(rawSeverity: string, confidence: number): Severity {
-  // If GPT isn't sure, flag for human review regardless of the severity it chose
   if (confidence < REVIEW_THRESHOLD) return 'review';
   if (rawSeverity === 'error') return 'error';
   if (rawSeverity === 'warning') return 'warning';
@@ -216,23 +218,41 @@ Rules:
       },
       signatures: [], checkboxes: [], filled_fields: [],
       compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}`, confidence: 1 }],
+      _rawGptResponse: `API_ERROR: ${err.slice(0, 200)}`,
     };
   }
 
   const data = await response.json();
   const raw: string = data.output?.[0]?.content?.[0]?.text ?? '';
 
+  // ── DEBUG: log raw response ──────────────────────────────────────────────
+  console.log(`[DEBUG PAGE ${pageNumber}] Raw GPT response (first 600 chars):`, raw.slice(0, 600));
+
   try {
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
+    // Capture confidence BEFORE the falsy-fill so we can see the originals
+    const sellerConfBefore = parsed.initials?.seller?.confidence;
+    const buyerConfBefore  = parsed.initials?.buyer?.confidence;
+
+    console.log(`[DEBUG PAGE ${pageNumber}] Initials parsed:`, JSON.stringify({
+      seller: { present: parsed.initials?.seller?.present, value: parsed.initials?.seller?.value, confidence: sellerConfBefore },
+      buyer:  { present: parsed.initials?.buyer?.present,  value: parsed.initials?.buyer?.value,  confidence: buyerConfBefore },
+    }));
+
     // Ensure confidence fields exist (GPT might omit them)
+    // NOTE: !0 === true, so confidence:0 also gets overwritten here — this is a known bug being investigated
     if (!parsed.initials?.seller?.confidence) parsed.initials.seller.confidence = 0.9;
-    if (!parsed.initials?.buyer?.confidence) parsed.initials.buyer.confidence = 0.9;
+    if (!parsed.initials?.buyer?.confidence)  parsed.initials.buyer.confidence  = 0.9;
     for (const s of parsed.signatures ?? []) if (!s.confidence) s.confidence = 0.9;
     for (const c of parsed.checkboxes ?? []) if (!c.confidence) c.confidence = 0.9;
     for (const f of parsed.filled_fields ?? []) if (!f.confidence) f.confidence = 0.9;
     for (const flag of parsed.compliance_flags ?? []) if (!flag.confidence) flag.confidence = 0.9;
+
+    // Attach debug fields
+    parsed._rawGptResponse = raw.slice(0, 800);
+    parsed._confidenceBefore = { sellerConf: sellerConfBefore, buyerConf: buyerConfBefore };
 
     return parsed as PageResult;
   } catch (e) {
@@ -245,6 +265,7 @@ Rules:
       },
       signatures: [], checkboxes: [], filled_fields: [],
       compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response', confidence: 1 }],
+      _rawGptResponse: `PARSE_ERROR: ${raw.slice(0, 400)}`,
     };
   }
 }
@@ -280,7 +301,6 @@ function aggregateResults(
 
     const needsInitials = initialsPages.length === 0 || initialsPages.includes(page.page);
 
-    // Initials — apply confidence threshold
     const sellerSev = toSeverity('error', page.initials.seller.confidence);
     const buyerSev  = toSeverity('error', page.initials.buyer.confidence);
     initialsGrid.push({
@@ -302,7 +322,6 @@ function aggregateResults(
       list.push({ page: page.page, message: 'Buyer initials missing', severity: buyerSev });
     }
 
-    // Signatures
     for (const sig of page.signatures) {
       totalSigs++;
       if (sig.signed) {
@@ -321,11 +340,9 @@ function aggregateResults(
       }
     }
 
-    // Checkboxes
     totalBoxes   += page.checkboxes.length;
     checkedBoxes += page.checkboxes.filter(c => c.checked).length;
 
-    // Fields
     for (const field of page.filled_fields) {
       totalFields++;
       if (field.blank) {
@@ -336,7 +353,6 @@ function aggregateResults(
       }
     }
 
-    // AI compliance flags
     for (const flag of page.compliance_flags) {
       const sev = toSeverity(flag.severity, flag.confidence);
       const list = sev === 'error' ? errors : sev === 'review' ? reviews : warnings;
@@ -438,9 +454,7 @@ function matchViolationsToCoords(
       if (bestScore >= 3) matched = best;
 
     } else {
-      // Generic AI flag — label with severity
       shortLabel = v.severity === 'error' ? 'ERR' : v.severity === 'review' ? 'REVIEW' : 'WARN';
-      // Don't auto-match generic flags — too many false positives
     }
 
     if (matched) {
@@ -481,7 +495,6 @@ export async function POST(req: NextRequest) {
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     const numPages = pdfDoc.getPageCount();
 
-    // Match template
     let matchedSlug = formSlug;
     if (!matchedSlug) {
       const { data: templates } = await supabase
@@ -492,7 +505,6 @@ export async function POST(req: NextRequest) {
       if (templates && templates.length === 1) matchedSlug = templates[0].slug;
     }
 
-    // Load form profile
     let formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null = null;
     if (matchedSlug) {
       const { data: profile } = await supabase
@@ -509,7 +521,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Load field coordinates
     const coordsByPage: Record<number, FieldCoord[]> = {};
     if (matchedSlug) {
       const { data: coords } = await supabase
@@ -526,7 +537,6 @@ export async function POST(req: NextRequest) {
 
     const initialsPages: number[] = formProfile?.initials_pages ?? [];
 
-    // Analyze each page
     const pageResults: PageResult[] = [];
     for (let i = 0; i < numPages; i++) {
       const singlePageDoc = await PDFDocument.create();
@@ -547,13 +557,29 @@ export async function POST(req: NextRequest) {
       ? matchViolationsToCoords(report.violations, coordsByPage)
       : [];
 
+    // ── DEBUG: surface per-page initials data in response ──────────────────
+    const pageDebug = pageResults.map(p => ({
+      page:              p.page,
+      sellerPresent:     p.initials.seller.present,
+      sellerValue:       p.initials.seller.value,
+      sellerConfAfter:   p.initials.seller.confidence,
+      sellerConfBefore:  p._confidenceBefore?.sellerConf ?? null,
+      buyerPresent:      p.initials.buyer.present,
+      buyerValue:        p.initials.buyer.value,
+      buyerConfAfter:    p.initials.buyer.confidence,
+      buyerConfBefore:   p._confidenceBefore?.buyerConf ?? null,
+      parseError:        p.parseError ?? false,
+      rawGpt:            p._rawGptResponse ?? '',
+    }));
+
     return NextResponse.json({
       ...report,
       formSlug: matchedSlug,
       numPages,
       violationBoxes,
       hasCoordinates: Object.keys(coordsByPage).length > 0,
-      isDotloop: platform === 'dotloop', // legacy alias
+      isDotloop: platform === 'dotloop',
+      pageDebug, // ← DEBUG: remove after investigation
     });
 
   } catch (err: any) {
