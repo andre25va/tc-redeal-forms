@@ -341,7 +341,14 @@ const PDFViewer: React.FC<Props> = ({ pdfFile, pdfUrl, currentPage, totalPages, 
             <span style={{ width: 12, height: 12, borderRadius: 2, border: '2px solid #3b82f6', background: 'rgba(59,130,246,0.12)', display: 'inline-block' }} />
             Needs Review
           </span>
-          {pageMissing.length === 0 && <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ No issues on this page</span>}
+          {pageMissing.length === 0 && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: '#e5e7eb', color: '#6b7280',
+              fontWeight: 600, fontSize: 12,
+              padding: '3px 10px', borderRadius: 999,
+            }}>✓ No issues on this page</span>
+          )}
         </div>
       )}
 
