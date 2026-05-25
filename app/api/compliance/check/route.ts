@@ -45,7 +45,7 @@ function platformHashHint(platform: EsigPlatform): string {
 
 type Severity = 'error' | 'warning' | 'review';
 
-interface PageResult {
+export interface PageResult {
   page: number;
   initials: {
     seller: { present: boolean; value: string | null; confidence: number };
@@ -63,50 +63,6 @@ interface PageResult {
   filled_fields: Array<{ label: string; value: string; blank: boolean; confidence: number }>;
   compliance_flags: Array<{ severity: Severity; message: string; confidence: number }>;
   parseError?: boolean;
-}
-
-interface Violation {
-  page: number;
-  message: string;
-  severity: Severity;
-}
-
-interface ViolationBox {
-  fieldId: string;
-  page: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  severity: Severity;
-  type: string;
-  label: string;
-}
-
-interface FieldCoord {
-  field_key: string;
-  page_num: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  field_type: string;
-  is_signature: boolean;
-  is_initial: boolean;
-}
-
-const PAGE_W = 612;
-const PAGE_H = 792;
-
-// Confidence threshold — below this, downgrade to 'review' instead of error/warning
-const REVIEW_THRESHOLD = 0.70;
-
-function toSeverity(rawSeverity: string, confidence: number): Severity {
-  if (confidence < REVIEW_THRESHOLD) return 'review';
-  if (rawSeverity === 'error') return 'error';
-  if (rawSeverity === 'warning') return 'warning';
-  if (rawSeverity === 'review') return 'review';
-  return 'warning';
 }
 
 // ─── Build GPT prompt ─────────────────────────────────────────────────────────
@@ -166,27 +122,27 @@ Return ONLY valid JSON, no markdown fences:
 Severity guide:
 - "error"   = definite violation (missing required sig/initials, unsigned block)
 - "warning" = soft issue (optional blank, unusual value)
-- "review"  = you are unsure — handwriting unclear, partially filled, ambiguous checkbox, value hard to read
+- "review"  = you are unsure — handwriting unclear, partially filled, ambiguous checkbox
 
 Confidence guide (0.0–1.0):
-- 1.0 = crystal clear, no ambiguity
-- 0.7–0.9 = mostly clear, minor uncertainty
+- 1.0 = crystal clear
+- 0.7–0.9 = mostly clear
 - 0.5–0.7 = uncertain — use severity "review"
 - < 0.5 = very unclear — still report but use severity "review"
 
 Rules:
-- Filled checkbox (darkened/checked box) = checked; empty outline = unchecked
+- Filled checkbox = checked; empty outline = unchecked
 - E-sig stamp + verification code = signed; blank line = unsigned
 - N/A, 0, dashes = NOT blank; truly empty lines/boxes = blank
 - Do not flag unchecked checkboxes as errors unless both-option logic requires it
 - If you see a visual stamp/badge with initials and date in the footer, that IS the initials — mark present: true`;
 }
 
-// ─── Analyze a single page with GPT-4o (image-based) ─────────────────────────
+// ─── Analyze a single page with GPT-4o ────────────────────────────────────────
 
 async function analyzePageWithGPT4o(
-  pageBase64: string,          // PDF page bytes (base64) — fallback only
-  pageImageBase64: string | null, // JPEG image (base64) — preferred; sees rasterized stamps
+  pageBase64: string | null,
+  pageImageBase64: string | null,
   pageNumber: number,
   totalPages: number,
   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
@@ -197,7 +153,6 @@ async function analyzePageWithGPT4o(
   let response: Response;
 
   if (pageImageBase64) {
-    // ── Preferred path: send rendered JPEG → GPT-4o sees all visual content ──
     response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -216,14 +171,14 @@ async function analyzePageWithGPT4o(
                 detail: 'high',
               },
             },
-            { type: 'input_text', text: prompt },
+            { type: 'text', text: prompt },
           ],
         }],
         max_tokens: 2000,
       }),
     });
-  } else {
-    // ── Fallback: raw PDF bytes via Responses API ─────────────────────────────
+  } else if (pageBase64) {
+    // Fallback: raw PDF bytes
     response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
@@ -232,22 +187,30 @@ async function analyzePageWithGPT4o(
       },
       body: JSON.stringify({
         model: 'gpt-4o',
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_file',
-                filename: `page_${pageNumber}.pdf`,
-                file_data: `data:application/pdf;base64,${pageBase64}`,
-              },
-              { type: 'input_text', text: prompt },
-            ],
-          },
-        ],
+        input: [{
+          role: 'user',
+          content: [
+            {
+              type: 'input_file',
+              filename: `page_${pageNumber}.pdf`,
+              file_data: `data:application/pdf;base64,${pageBase64}`,
+            },
+            { type: 'input_text', text: prompt },
+          ],
+        }],
         max_output_tokens: 2000,
       }),
     });
+  } else {
+    return {
+      page: pageNumber, parseError: true,
+      initials: {
+        seller: { present: false, value: null, confidence: 0 },
+        buyer:  { present: false, value: null, confidence: 0 },
+      },
+      signatures: [], checkboxes: [], filled_fields: [],
+      compliance_flags: [{ severity: 'error', message: 'No page data provided', confidence: 1 }],
+    };
   }
 
   if (!response.ok) {
@@ -265,8 +228,6 @@ async function analyzePageWithGPT4o(
   }
 
   const data = await response.json();
-
-  // Extract text depending on which API was used
   const raw: string = pageImageBase64
     ? (data.choices?.[0]?.message?.content ?? '')
     : (data.output?.[0]?.content?.[0]?.text ?? '');
@@ -275,13 +236,12 @@ async function analyzePageWithGPT4o(
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
-    // Fix: use == null (not falsy !) so confidence=0 stays as 0 and doesn't
-    // bypass the REVIEW_THRESHOLD check — this was the false-positive root cause
+    // Fix: use == null (not !) so confidence=0 stays 0 and isn't falsely upgraded
     if (parsed.initials?.seller?.confidence == null) parsed.initials.seller.confidence = 0.9;
     if (parsed.initials?.buyer?.confidence  == null) parsed.initials.buyer.confidence  = 0.9;
-    for (const s of parsed.signatures ?? [])     if (s.confidence == null) s.confidence = 0.9;
-    for (const c of parsed.checkboxes ?? [])     if (c.confidence == null) c.confidence = 0.9;
-    for (const f of parsed.filled_fields ?? [])  if (f.confidence == null) f.confidence = 0.9;
+    for (const s of parsed.signatures ?? [])    if (s.confidence == null) s.confidence = 0.9;
+    for (const c of parsed.checkboxes ?? [])    if (c.confidence == null) c.confidence = 0.9;
+    for (const f of parsed.filled_fields ?? []) if (f.confidence == null) f.confidence = 0.9;
     for (const flag of parsed.compliance_flags ?? []) if (flag.confidence == null) flag.confidence = 0.9;
 
     return parsed as PageResult;
@@ -299,260 +259,79 @@ async function analyzePageWithGPT4o(
   }
 }
 
-// ─── Aggregate results ────────────────────────────────────────────────────────
+// ─── Fingerprint PDF (page count → form slug) ─────────────────────────────────
 
-function aggregateResults(
-  pageResults: PageResult[],
-  matchedSlug: string,
-  initialsPages: number[],
-  platform: EsigPlatform
-) {
-  const errors:   Violation[] = [];
-  const warnings: Violation[] = [];
-  const reviews:  Violation[] = [];
+async function fingerprintPdf(
+  pdfBytes: Uint8Array
+): Promise<{ numPages: number; matchedSlug: string; platform: EsigPlatform }> {
+  const textSample = Buffer.from(pdfBytes).toString('latin1').slice(0, 50000);
+  const platform = detectEsigPlatform(textSample);
 
-  let totalSigs = 0, signedSigs = 0;
-  let totalFields = 0, blankFields = 0;
-  let totalBoxes = 0, checkedBoxes = 0;
+  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const numPages = pdfDoc.getPageCount();
 
-  const esigHashes: Array<{ signer: string; hash: string; timestamp: string }> = [];
-  const initialsGrid: Array<{
-    page: number; seller: string | null; buyer: string | null;
-    sellerOk: boolean; buyerOk: boolean;
-    sellerReview: boolean; buyerReview: boolean;
-  }> = [];
+  const { data: templates } = await supabase
+    .from('form_templates')
+    .select('slug, page_count')
+    .eq('page_count', numPages)
+    .limit(5);
 
-  for (const page of pageResults) {
-    if (page.parseError) {
-      errors.push({ page: page.page, message: 'AI analysis failed for this page', severity: 'error' });
-      continue;
-    }
+  const matchedSlug = (templates?.length === 1) ? templates[0].slug : '';
 
-    const needsInitials = initialsPages.length === 0 || initialsPages.includes(page.page);
-
-    const sellerSev = toSeverity('error', page.initials.seller.confidence);
-    const buyerSev  = toSeverity('error', page.initials.buyer.confidence);
-    initialsGrid.push({
-      page:         page.page,
-      seller:       page.initials.seller.value,
-      buyer:        page.initials.buyer.value,
-      sellerOk:     !needsInitials || page.initials.seller.present,
-      buyerOk:      !needsInitials || page.initials.buyer.present,
-      sellerReview: sellerSev === 'review',
-      buyerReview:  buyerSev  === 'review',
-    });
-
-    if (needsInitials && !page.initials.seller.present) {
-      const list = sellerSev === 'review' ? reviews : errors;
-      list.push({ page: page.page, message: 'Seller initials missing', severity: sellerSev });
-    }
-    if (needsInitials && !page.initials.buyer.present) {
-      const list = buyerSev === 'review' ? reviews : errors;
-      list.push({ page: page.page, message: 'Buyer initials missing', severity: buyerSev });
-    }
-
-    for (const sig of page.signatures) {
-      totalSigs++;
-      if (sig.signed) {
-        signedSigs++;
-        if (sig.esig_hash) {
-          esigHashes.push({
-            signer:    sig.signer ?? sig.label,
-            hash:      sig.esig_hash,
-            timestamp: sig.timestamp ?? '',
-          });
-        }
-      } else {
-        const sev = toSeverity('error', sig.confidence);
-        const list = sev === 'review' ? reviews : errors;
-        list.push({ page: page.page, message: `Unsigned: "${sig.label}"`, severity: sev });
-      }
-    }
-
-    totalBoxes   += page.checkboxes.length;
-    checkedBoxes += page.checkboxes.filter(c => c.checked).length;
-
-    for (const field of page.filled_fields) {
-      totalFields++;
-      if (field.blank) {
-        blankFields++;
-        const sev = toSeverity('warning', field.confidence);
-        const list = sev === 'review' ? reviews : warnings;
-        list.push({ page: page.page, message: `Blank field: "${field.label}"`, severity: sev });
-      }
-    }
-
-    for (const flag of page.compliance_flags) {
-      const sev = toSeverity(flag.severity, flag.confidence);
-      const list = sev === 'error' ? errors : sev === 'review' ? reviews : warnings;
-      list.push({ page: page.page, message: flag.message, severity: sev });
-    }
-  }
-
-  const isCompliant = errors.length === 0;
-
-  return {
-    status: isCompliant ? (reviews.length > 0 ? 'NEEDS-REVIEW' : 'COMPLIANT') : 'NON-COMPLIANT',
-    method: 'vision-per-page-gpt4o',
-    platform,
-    platformLabel: PLATFORM_LABELS[platform],
-    summary: {
-      totalPages:              pageResults.length,
-      pagesWithBothInitials:   initialsGrid.filter(r => r.sellerOk && r.buyerOk).length,
-      signaturesComplete:      `${signedSigs}/${totalSigs}`,
-      checkboxesFilled:        `${checkedBoxes}/${totalBoxes}`,
-      fieldsFilled:            `${totalFields - blankFields}/${totalFields}`,
-      criticalErrors:          errors.length,
-      warnings:                warnings.length,
-      reviewItems:             reviews.length,
-      esigHashes,
-    },
-    initialsGrid,
-    violations: [...errors, ...warnings, ...reviews],
-    pages: pageResults,
-  };
+  return { numPages, matchedSlug, platform };
 }
 
-// ─── Map violations → coordinate boxes ───────────────────────────────────────
-
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function matchViolationsToCoords(
-  violations: Violation[],
-  coordsByPage: Record<number, FieldCoord[]>
-): ViolationBox[] {
-  const boxes: ViolationBox[] = [];
-  const usedKeys = new Set<string>();
-
-  for (const v of violations) {
-    const pageCoords = coordsByPage[v.page] ?? [];
-    let matched: FieldCoord | null = null;
-    let shortLabel = '';
-
-    if (v.message === 'Seller initials missing' || v.message === 'Buyer initials missing') {
-      const isSeller = v.message.startsWith('Seller');
-      shortLabel = isSeller ? 'INIT-S' : 'INIT-B';
-      matched = pageCoords.find(c =>
-        (c.is_initial || c.field_type === 'initial') &&
-        c.field_key.includes(isSeller ? 'seller' : 'buyer') &&
-        !usedKeys.has(c.field_key)
-      ) ?? pageCoords.find(c =>
-        (c.is_initial || c.field_type === 'initial') && !usedKeys.has(c.field_key)
-      ) ?? null;
-
-    } else if (v.message.startsWith('Unsigned:')) {
-      shortLabel = v.severity === 'review' ? 'SIG?' : 'SIG';
-      const sigLabel = (v.message.match(/Unsigned: "(.+?)"/) ?? [])[1] ?? '';
-      const sigNorm = normalize(sigLabel);
-      let best: FieldCoord | null = null;
-      let bestScore = 0;
-      for (const c of pageCoords) {
-        if (!(c.is_signature || c.field_type === 'signature')) continue;
-        if (usedKeys.has(c.field_key)) continue;
-        const keyNorm = normalize(c.field_key);
-        let score = 0;
-        if (sigNorm && keyNorm.includes(sigNorm.slice(0, 4))) score += 2;
-        if (sigNorm.includes('seller') && keyNorm.includes('seller')) score += 3;
-        if (sigNorm.includes('buyer') && keyNorm.includes('buyer')) score += 3;
-        if (score > bestScore) { bestScore = score; best = c; }
-      }
-      if (!best) best = pageCoords.find(c => (c.is_signature || c.field_type === 'signature') && !usedKeys.has(c.field_key)) ?? null;
-      matched = best;
-
-    } else if (v.message.startsWith('Blank field:')) {
-      shortLabel = v.severity === 'review' ? 'BLANK?' : 'BLANK';
-      const rawLabel = (v.message.match(/Blank field: "(.+?)"/) ?? [])[1] ?? '';
-      const labelNorm = normalize(rawLabel);
-      let best: FieldCoord | null = null;
-      let bestScore = 0;
-      for (const c of pageCoords) {
-        if (c.is_signature || c.is_initial || c.field_type === 'signature' || c.field_type === 'initial') continue;
-        if (usedKeys.has(c.field_key)) continue;
-        const keyNorm = normalize(c.field_key);
-        let score = 0;
-        if (labelNorm.length >= 3 && keyNorm.includes(labelNorm.slice(0, Math.min(6, labelNorm.length)))) score += labelNorm.length;
-        if (keyNorm.length >= 3 && labelNorm.includes(keyNorm.slice(0, Math.min(6, keyNorm.length)))) score += keyNorm.length;
-        const words = rawLabel.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
-        for (const word of words) {
-          if (keyNorm.includes(normalize(word))) score += word.length;
-        }
-        if (score > bestScore) { bestScore = score; best = c; }
-      }
-      if (bestScore >= 3) matched = best;
-
-    } else {
-      shortLabel = v.severity === 'error' ? 'ERR' : v.severity === 'review' ? 'REVIEW' : 'WARN';
-    }
-
-    if (matched) {
-      usedKeys.add(matched.field_key);
-      boxes.push({
-        fieldId:  matched.field_key,
-        page:     v.page,
-        x:        (matched.x / PAGE_W) * 100,
-        y:        (matched.y / PAGE_H) * 100,
-        w:        (matched.width / PAGE_W) * 100,
-        h:        Math.max(matched.height / PAGE_H * 100, 1.5),
-        severity: v.severity,
-        type:     matched.field_type,
-        label:    shortLabel,
-      });
-    }
-  }
-
-  return boxes;
-}
-
-// ─── Main route ───────────────────────────────────────────────────────────────
+// ─── Main route handler ───────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get('pdf') as File | null;
-    const formSlug = (formData.get('formSlug') as string) || '';
 
-    if (!file) return NextResponse.json({ error: 'No PDF uploaded' }, { status: 400 });
+    // ── Batch mode: client sends pages in groups of 4 ─────────────────────
+    const batchMode   = formData.get('batchMode') === 'true';
+    const batchStart  = parseInt((formData.get('batchStart') as string) ?? '1', 10);
+    const totalPages  = parseInt((formData.get('totalPages') as string) ?? '0', 10);
+    let   formSlug    = (formData.get('formSlug')  as string) ?? '';
+    let   platform    = ((formData.get('platform') as string) ?? 'unknown') as EsigPlatform;
+    let   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null = null;
 
-    // ── Collect pre-rendered page images from client (if sent) ───────────────
-    // Client renders pages with pdf.js → JPEG base64 → pageImage_1, pageImage_2, ...
-    // This lets GPT-4o see rasterized XObjects (Dotloop/DocuSign stamp images)
-    // that are invisible when sending raw PDF bytes via input_file.
+    const rawFormProfile = formData.get('formProfile') as string | null;
+    if (rawFormProfile) {
+      try { formProfile = JSON.parse(rawFormProfile); } catch {}
+    }
+
+    // Collect page images (supports both batch keys like pageImage_5 and sequential pageImage_1)
     const pageImages: Map<number, string> = new Map();
-    for (let i = 1; i <= 50; i++) {
+    for (let i = 1; i <= 200; i++) {
       const img = formData.get(`pageImage_${i}`) as string | null;
-      if (!img) break;
+      if (!img) { if (i > batchStart + 20) break; continue; }
       pageImages.set(i, img);
     }
-    const hasPageImages = pageImages.size > 0;
-    console.log(`[compliance/check] Received ${pageImages.size} pre-rendered page images`);
 
-    const arrayBuffer = await file.arrayBuffer();
-    const pdfBytes = new Uint8Array(arrayBuffer);
+    console.log(`[compliance/check] batchMode=${batchMode} batchStart=${batchStart} totalPages=${totalPages} images=${pageImages.size}`);
 
-    const textSample = Buffer.from(pdfBytes).toString('latin1').slice(0, 50000);
-    const platform = detectEsigPlatform(textSample);
+    // ── If we have a PDF, fingerprint it (first batch or non-batch mode) ───
+    let numPages = totalPages;
+    let pdfDoc: PDFDocument | null = null;
+    let pdfBytes: Uint8Array | null = null;
 
-    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-    const numPages = pdfDoc.getPageCount();
-
-    let matchedSlug = formSlug;
-    if (!matchedSlug) {
-      const { data: templates } = await supabase
-        .from('form_templates')
-        .select('slug, page_count')
-        .eq('page_count', numPages)
-        .limit(5);
-      if (templates && templates.length === 1) matchedSlug = templates[0].slug;
+    if (file) {
+      const ab = await file.arrayBuffer();
+      pdfBytes = new Uint8Array(ab);
+      const fp = await fingerprintPdf(pdfBytes);
+      numPages  = fp.numPages;
+      if (!formSlug) formSlug = fp.matchedSlug;
+      if (platform === 'unknown') platform = fp.platform;
+      pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     }
 
-    let formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null = null;
-    if (matchedSlug) {
+    // ── Load formProfile if not provided ─────────────────────────────────
+    if (!formProfile && formSlug) {
       const { data: profile } = await supabase
         .from('form_profiles')
         .select('seller_count, buyer_count, initials_pages')
-        .eq('form_slug', matchedSlug)
+        .eq('form_slug', formSlug)
         .single();
       if (profile) {
         formProfile = {
@@ -563,61 +342,65 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const coordsByPage: Record<number, FieldCoord[]> = {};
-    if (matchedSlug) {
-      const { data: coords } = await supabase
-        .from('field_coordinates')
-        .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial')
-        .eq('form_slug', matchedSlug);
-      if (coords) {
-        for (const c of coords) {
-          if (!coordsByPage[c.page_num]) coordsByPage[c.page_num] = [];
-          coordsByPage[c.page_num].push(c as FieldCoord);
-        }
-      }
+    // ── Process the pages in this batch ──────────────────────────────────
+    const pageNumbers = Array.from(pageImages.keys()).sort((a, b) => a - b);
+    if (pageNumbers.length === 0 && !batchMode) {
+      return NextResponse.json({ error: 'No pages to analyze' }, { status: 400 });
     }
 
-    const initialsPages: number[] = formProfile?.initials_pages ?? [];
+    const pageResults = [];
+    for (const pageNum of pageNumbers) {
+      const pageImageBase64 = pageImages.get(pageNum) ?? null;
 
-    const pageResults: PageResult[] = [];
-    for (let i = 0; i < numPages; i++) {
-      // Extract single page as PDF bytes (fallback path)
-      const singlePageDoc = await PDFDocument.create();
-      const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [i]);
-      singlePageDoc.addPage(copiedPage);
-      const pageBytes = await singlePageDoc.save();
-      const pageBase64 = Buffer.from(pageBytes).toString('base64');
-
-      // Use pre-rendered JPEG if client sent it (preferred: GPT sees visual stamps)
-      const pageImageBase64 = pageImages.get(i + 1) ?? null;
+      // Extract single-page PDF bytes (for fallback path)
+      let pageBase64: string | null = null;
+      if (pdfDoc && pageNum <= numPages) {
+        const singlePageDoc = await PDFDocument.create();
+        const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [pageNum - 1]);
+        singlePageDoc.addPage(copiedPage);
+        const pageBytesSingle = await singlePageDoc.save();
+        pageBase64 = Buffer.from(pageBytesSingle).toString('base64');
+      }
 
       const result = await analyzePageWithGPT4o(
         pageBase64,
         pageImageBase64,
-        i + 1,
-        numPages,
+        pageNum,
+        numPages || totalPages,
         formProfile,
         platform
       );
       pageResults.push(result);
 
-      if (i < numPages - 1) await new Promise(r => setTimeout(r, 300));
+      if (pageNumbers.indexOf(pageNum) < pageNumbers.length - 1) {
+        await new Promise(r => setTimeout(r, 300));
+      }
     }
 
-    const report = aggregateResults(pageResults, matchedSlug, initialsPages, platform);
+    // ── Return batch result (client will aggregate after all batches) ─────
+    if (batchMode) {
+      return NextResponse.json({
+        batchResult:  true,
+        pageResults,
+        formSlug,
+        platform,
+        platformLabel: PLATFORM_LABELS[platform],
+        formProfile,
+        totalPages: numPages || totalPages,
+      });
+    }
 
-    const violationBoxes = Object.keys(coordsByPage).length > 0
-      ? matchViolationsToCoords(report.violations, coordsByPage)
-      : [];
-
+    // ── Legacy non-batch mode: run full check for backward compat ─────────
+    // (used by any older callers that pass all page images at once)
+    // Defer to aggregate route logic inline for full result
     return NextResponse.json({
-      ...report,
-      formSlug: matchedSlug,
-      numPages,
-      violationBoxes,
-      hasCoordinates: Object.keys(coordsByPage).length > 0,
-      isDotloop: platform === 'dotloop',
-      usedPageImages: hasPageImages,
+      batchResult: true,
+      pageResults,
+      formSlug,
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      formProfile,
+      totalPages: numPages || totalPages,
     });
 
   } catch (err: any) {
