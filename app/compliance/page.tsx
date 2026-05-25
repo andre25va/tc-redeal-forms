@@ -3,140 +3,115 @@ import React, { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Download, BookOpen, CheckSquare, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
-import UploadPanel from '@/components/compliance/UploadPanel';
+import UploadPanel, { CheckResultPayload } from '@/components/compliance/UploadPanel';
 import PartyCard from '@/components/compliance/PartyCard';
 import ContractTabs from '@/components/compliance/ContractTabs';
 import LibraryView from '@/components/compliance/LibraryView';
-import { TransactionPackage, Contract, Party, ViewPage, FiredTrigger } from '@/lib/compliance/types';
+import {
+  TransactionPackage, Contract, Party, PartyField, MissingField,
+  ViewPage, FiredTrigger, PartyRole, FieldType,
+} from '@/lib/compliance/types';
 import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
-// Load PDFViewer only on the client — pdfjs-dist requires browser APIs
 const PDFViewer = dynamic(() => import('@/components/compliance/PDFViewer'), { ssr: false });
 
-const MOCK_PACKAGE: TransactionPackage = {
-  fileName: 'Smith-Torres_Transaction_Package.pdf',
-  uploadedAt: 'Mar 27, 2026 · 9:14 AM',
-  mlsId: 'crmls',
-  contracts: [
-    {
-      id: 'purchase-agreement',
-      formName: 'Residential Purchase Agreement',
-      shortName: 'Purchase Agreement',
-      mlsId: 'crmls',
-      templateId: 'crmls-rpa',
-      passed: false,
-      totalPages: 6,
-      parties: [
-        { id: 'pa_buyer1', role: 'buyer', label: 'Buyer 1', name: 'Michael Torres', fields: [
-          { fieldId: 'pa_b1_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'signed',  x: 5,  y: 88, w: 12, h: 4 },
-          { fieldId: 'pa_b1_init_p4', label: 'Initials — Page 4', page: 4, type: 'initial',   status: 'missing', x: 5,  y: 88, w: 12, h: 4 },
-          { fieldId: 'pa_b1_sig_p6',  label: 'Signature — Page 6', page: 6, type: 'signature', status: 'missing', x: 3,  y: 85, w: 44, h: 5 },
-        ]},
-        { id: 'pa_buyer2', role: 'buyer', label: 'Buyer 2', name: 'Jennifer Torres', fields: [
-          { fieldId: 'pa_b2_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'signed',  x: 20, y: 88, w: 12, h: 4 },
-          { fieldId: 'pa_b2_init_p4', label: 'Initials — Page 4', page: 4, type: 'initial',   status: 'signed',  x: 20, y: 88, w: 12, h: 4 },
-          { fieldId: 'pa_b2_sig_p6',  label: 'Signature — Page 6', page: 6, type: 'signature', status: 'signed',  x: 20, y: 85, w: 44, h: 5 },
-        ]},
-        { id: 'pa_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith', fields: [
-          { fieldId: 'pa_s1_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'signed',  x: 5,  y: 93, w: 12, h: 4 },
-          { fieldId: 'pa_s1_sig_p6',  label: 'Signature — Page 6', page: 6, type: 'signature', status: 'signed',  x: 3,  y: 92, w: 44, h: 5 },
-        ]},
-        { id: 'pa_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith', fields: [
-          { fieldId: 'pa_s2_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'missing', x: 20, y: 93, w: 12, h: 4 },
-          { fieldId: 'pa_s2_sig_p6',  label: 'Signature — Page 6', page: 6, type: 'signature', status: 'missing', x: 20, y: 92, w: 44, h: 5 },
-        ]},
-        { id: 'pa_agent1', role: 'agent', label: 'Agent 1', name: 'Rosa Martinez', fields: [
-          { fieldId: 'pa_ag1_sig_p6', label: 'Agent Sig — Page 6', page: 6, type: 'signature', status: 'signed', x: 3, y: 78, w: 44, h: 5 },
-        ]},
-        { id: 'pa_agent2', role: 'agent', label: 'Agent 2', name: '(Not Assigned)', fields: [
-          { fieldId: 'pa_ag2_sig_p6', label: 'Agent Sig — Page 6', page: 6, type: 'signature', status: 'missing', x: 52, y: 78, w: 44, h: 5 },
-        ]},
-        { id: 'pa_broker', role: 'broker', label: 'Broker', name: 'Premier Realty Group', fields: [
-          { fieldId: 'pa_br_sig_p6', label: 'Broker Sig — Page 6', page: 6, type: 'signature', status: 'signed', x: 3, y: 94, w: 94, h: 5 },
-        ]},
-      ],
-      missingFields: [
-        { fieldId: 'pa_b1_init_p4', label: 'Initials',  partyLabel: 'Buyer 1',  party: 'Michael Torres',  page: 4, type: 'initial',   x: 5,  y: 88, w: 12, h: 4 },
-        { fieldId: 'pa_b1_sig_p6',  label: 'Signature', partyLabel: 'Buyer 1',  party: 'Michael Torres',  page: 6, type: 'signature', x: 3,  y: 85, w: 44, h: 5 },
-        { fieldId: 'pa_s2_init_p2', label: 'Initials',  partyLabel: 'Seller 2', party: 'Mary Smith',      page: 2, type: 'initial',   x: 20, y: 93, w: 12, h: 4 },
-        { fieldId: 'pa_s2_sig_p6',  label: 'Signature', partyLabel: 'Seller 2', party: 'Mary Smith',      page: 6, type: 'signature', x: 20, y: 92, w: 44, h: 5 },
-        { fieldId: 'pa_ag2_sig_p6', label: 'Signature', partyLabel: 'Agent 2',  party: '(Not Assigned)',  page: 6, type: 'signature', x: 52, y: 78, w: 44, h: 5 },
-      ],
-      firedTriggers: [
-        { triggerId: 'rpa-hoa', fieldLabel: 'HOA / Common interest development', requiresFormId: 'crmls-hoa', requiresFormName: 'HOA Documents Addendum (HOAI)', presentInPackage: false },
-        { triggerId: 'rpa-contingency', fieldLabel: 'Loan contingency active', requiresFormId: 'crmls-lcr', requiresFormName: 'Loan Contingency Removal (CR)', presentInPackage: false },
-      ],
-    },
-    {
-      id: 'sellers-disclosure',
-      formName: "Seller's Disclosure Addendum",
-      shortName: "Seller's Disc.",
-      mlsId: 'crmls', templateId: 'crmls-sda', passed: false, totalPages: 8,
-      parties: [
-        { id: 'sd_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith', fields: [
-          { fieldId: 'sd_s1_init_p1', label: 'Initials — Page 1', page: 1, type: 'initial',   status: 'signed',  x: 5,  y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s1_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'signed',  x: 5,  y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s1_init_p5', label: 'Initials — Page 5', page: 5, type: 'initial',   status: 'missing', x: 5,  y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s1_sig_p8',  label: 'Signature — Page 8', page: 8, type: 'signature', status: 'signed',  x: 3,  y: 88, w: 44, h: 5 },
-        ]},
-        { id: 'sd_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith', fields: [
-          { fieldId: 'sd_s2_init_p2', label: 'Initials — Page 2', page: 2, type: 'initial',   status: 'missing', x: 20, y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s2_init_p4', label: 'Initials — Page 4', page: 4, type: 'initial',   status: 'missing', x: 20, y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s2_init_p7', label: 'Initials — Page 7', page: 7, type: 'initial',   status: 'missing', x: 20, y: 88, w: 12, h: 4 },
-          { fieldId: 'sd_s2_sig_p8',  label: 'Signature — Page 8', page: 8, type: 'signature', status: 'missing', x: 20, y: 88, w: 44, h: 5 },
-        ]},
-        { id: 'sd_agent1', role: 'agent', label: 'Agent 1', name: 'Rosa Martinez', fields: [
-          { fieldId: 'sd_ag1_sig_p8', label: 'Agent Sig — Page 8', page: 8, type: 'signature', status: 'signed', x: 3, y: 78, w: 44, h: 5 },
-        ]},
-      ],
-      missingFields: [
-        { fieldId: 'sd_s1_init_p5', label: 'Initials',  partyLabel: 'Seller 1', party: 'John Smith',  page: 5, type: 'initial',   x: 5,  y: 88, w: 12, h: 4 },
-        { fieldId: 'sd_s2_init_p2', label: 'Initials',  partyLabel: 'Seller 2', party: 'Mary Smith',  page: 2, type: 'initial',   x: 20, y: 88, w: 12, h: 4 },
-        { fieldId: 'sd_s2_init_p4', label: 'Initials',  partyLabel: 'Seller 2', party: 'Mary Smith',  page: 4, type: 'initial',   x: 20, y: 88, w: 12, h: 4 },
-        { fieldId: 'sd_s2_init_p7', label: 'Initials',  partyLabel: 'Seller 2', party: 'Mary Smith',  page: 7, type: 'initial',   x: 20, y: 88, w: 12, h: 4 },
-        { fieldId: 'sd_s2_sig_p8',  label: 'Signature', partyLabel: 'Seller 2', party: 'Mary Smith',  page: 8, type: 'signature', x: 20, y: 88, w: 44, h: 5 },
-      ],
-      firedTriggers: [
-        { triggerId: 'sda-pool',    fieldLabel: 'Pool / Spa present',          requiresFormId: 'crmls-spq',   requiresFormName: 'Pool / Spa Disclosure (SPQ)',      presentInPackage: false },
-        { triggerId: 'sda-pre1978', fieldLabel: 'Home built before 1978',       requiresFormId: 'crmls-lpd',   requiresFormName: 'Lead-Based Paint Disclosure',       presentInPackage: true  },
-        { triggerId: 'sda-solar',   fieldLabel: 'Solar panels — leased or PPA', requiresFormId: 'crmls-solar', requiresFormName: 'Solar Lease / PPA Addendum (SLPA)', presentInPackage: false },
-      ],
-    },
-    {
-      id: 'lead-paint', formName: 'Lead-Based Paint Disclosure', shortName: 'Lead Paint',
-      mlsId: 'crmls', templateId: 'crmls-lpd', passed: true, totalPages: 2,
-      parties: [
-        { id: 'lp_buyer1',  role: 'buyer',  label: 'Buyer 1',  name: 'Michael Torres',  fields: [{ fieldId: 'lp_b1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 82, w: 44, h: 5 }] },
-        { id: 'lp_buyer2',  role: 'buyer',  label: 'Buyer 2',  name: 'Jennifer Torres', fields: [{ fieldId: 'lp_b2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 82, w: 44, h: 5 }] },
-        { id: 'lp_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith',       fields: [{ fieldId: 'lp_s1_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 3,  y: 90, w: 44, h: 5 }] },
-        { id: 'lp_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith',       fields: [{ fieldId: 'lp_s2_sig_p2',  label: 'Signature — Page 2', page: 2, type: 'signature', status: 'signed', x: 52, y: 90, w: 44, h: 5 }] },
-        { id: 'lp_agent1',  role: 'agent',  label: 'Agent 1',  name: 'Rosa Martinez',    fields: [{ fieldId: 'lp_ag1_sig_p2', label: 'Agent Sig — Page 2',  page: 2, type: 'signature', status: 'signed', x: 3,  y: 96, w: 44, h: 5 }] },
-      ],
-      missingFields: [],
-      firedTriggers: [],
-    },
-    {
-      id: 'counter-offer', formName: 'Counter Offer Addendum', shortName: 'Counter Offer',
-      mlsId: 'crmls', templateId: 'crmls-coa', passed: false, totalPages: 1,
-      parties: [
-        { id: 'co_buyer1',  role: 'buyer',  label: 'Buyer 1',  name: 'Michael Torres', fields: [{ fieldId: 'co_b1_sig_p1', label: 'Signature — Page 1', page: 1, type: 'signature', status: 'missing', x: 3,  y: 85, w: 44, h: 5 }] },
-        { id: 'co_seller1', role: 'seller', label: 'Seller 1', name: 'John Smith',     fields: [{ fieldId: 'co_s1_sig_p1', label: 'Signature — Page 1', page: 1, type: 'signature', status: 'signed',  x: 3,  y: 92, w: 44, h: 5 }] },
-        { id: 'co_seller2', role: 'seller', label: 'Seller 2', name: 'Mary Smith',     fields: [{ fieldId: 'co_s2_sig_p1', label: 'Signature — Page 1', page: 1, type: 'signature', status: 'signed',  x: 52, y: 92, w: 44, h: 5 }] },
-      ],
-      missingFields: [
-        { fieldId: 'co_b1_sig_p1', label: 'Signature', partyLabel: 'Buyer 1', party: 'Michael Torres', page: 1, type: 'signature', x: 3, y: 85, w: 44, h: 5 },
-      ],
-      firedTriggers: [],
-    },
-  ],
-};
+// ─── helpers ────────────────────────────────────────────────────────────────
 
-const ROLE_GROUPS: { role: Party['role']; label: string; color: string }[] = [
-  { role: 'buyer',  label: 'Buyers',  color: 'text-blue-600' },
-  { role: 'seller', label: 'Sellers', color: 'text-purple-600' },
-  { role: 'agent',  label: 'Agents',  color: 'text-teal-600' },
-  { role: 'broker', label: 'Broker',  color: 'text-amber-600' },
-];
+function guessPartyLabel(fieldKey: string): string {
+  const k = fieldKey.toLowerCase();
+  if (k.includes('buyer_2') || k.includes('buyer2') || k.includes('purchaser_2')) return 'Buyer 2';
+  if (k.includes('buyer') || k.includes('purchaser')) return 'Buyer 1';
+  if (k.includes('seller_2') || k.includes('seller2') || k.includes('vendor_2')) return 'Seller 2';
+  if (k.includes('seller') || k.includes('vendor')) return 'Seller 1';
+  if (k.includes('broker')) return 'Broker';
+  if (k.includes('agent') || k.includes('licensee') || k.includes('realtor')) return 'Agent';
+  return 'Party';
+}
+
+function guessRole(label: string): PartyRole {
+  const l = label.toLowerCase();
+  if (l.includes('buyer') || l.includes('purchaser')) return 'buyer';
+  if (l.includes('seller') || l.includes('vendor')) return 'seller';
+  if (l.includes('broker')) return 'broker';
+  return 'agent';
+}
+
+function buildPackageFromResult(
+  file: File,
+  mlsId: string,
+  payload: CheckResultPayload,
+): TransactionPackage {
+  const violations: any[] = payload.check.violations ?? [];
+
+  // MissingField entries for PDF overlay
+  const missingFields: MissingField[] = violations
+    .filter((v: any) => v.page_num > 0 && v.x !== undefined)
+    .map((v: any) => ({
+      fieldId: v.field_key,
+      label: v.type === 'missing_signature' ? 'Signature'
+        : v.type === 'missing_initial' ? 'Initials' : 'Required',
+      partyLabel: guessPartyLabel(v.field_key),
+      party: guessPartyLabel(v.field_key),
+      page: v.page_num,
+      type: (v.type === 'missing_signature' ? 'signature' : 'initial') as FieldType,
+      x: v.x ?? 0,
+      y: v.y ?? 0,
+      w: Math.max(v.w ?? 0, 5),
+      h: Math.max(v.h ?? 0, 2),
+    }));
+
+  // Build parties from violation field keys
+  const partyMap = new Map<string, { id: string; role: PartyRole; label: string; name: string; fields: PartyField[] }>();
+  for (const v of violations) {
+    const label = guessPartyLabel(v.field_key);
+    if (!partyMap.has(label)) {
+      partyMap.set(label, {
+        id: `p_${label.replace(/\s+/g, '_').toLowerCase()}`,
+        role: guessRole(label),
+        label,
+        name: label,
+        fields: [],
+      });
+    }
+    const party = partyMap.get(label)!;
+    party.fields.push({
+      fieldId: v.field_key,
+      label: `${v.type === 'missing_signature' ? 'Signature' : 'Initials'} — Page ${v.page_num}`,
+      page: v.page_num,
+      type: (v.type === 'missing_signature' ? 'signature' : 'initial') as FieldType,
+      status: 'missing',
+      x: v.x ?? 0,
+      y: v.y ?? 0,
+      w: Math.max(v.w ?? 0, 5),
+      h: Math.max(v.h ?? 0, 2),
+    });
+  }
+  const parties: Party[] = Array.from(partyMap.values());
+
+  const contract: Contract = {
+    id: payload.form_slug,
+    formName: payload.form_name,
+    shortName: payload.form_name.split(' ').slice(0, 3).join(' '),
+    mlsId,
+    templateId: payload.form_slug,
+    passed: payload.check.passed,
+    totalPages: payload.page_count,
+    parties,
+    missingFields,
+    firedTriggers: [],
+  };
+
+  return {
+    fileName: file.name,
+    uploadedAt: new Date().toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    }),
+    mlsId,
+    contracts: [contract],
+  };
+}
+
+// ─── RequiredAddendaPanel ────────────────────────────────────────────────────
 
 function RequiredAddendaPanel({ contract }: { contract: Contract }) {
   const triggers = contract.firedTriggers ?? [];
@@ -172,18 +147,52 @@ function RequiredAddendaPanel({ contract }: { contract: Contract }) {
   );
 }
 
+// ─── RealCheckBanner ─────────────────────────────────────────────────────────
+
+function RealCheckBanner({ payload, onReset }: { payload: CheckResultPayload; onReset: () => void }) {
+  const { check } = payload;
+  const isFlattened = check.is_flattened;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 16px',
+      background: isFlattened ? '#fffbeb' : check.passed ? '#f0fdf4' : '#fef2f2',
+      borderBottom: `1px solid ${isFlattened ? '#fde68a' : check.passed ? '#bbf7d0' : '#fecaca'}`,
+      fontSize: 12,
+    }}>
+      <span style={{ fontWeight: 700, color: isFlattened ? '#92400e' : check.passed ? '#15803d' : '#dc2626' }}>
+        {isFlattened ? '⚠ Flattened PDF — manual review required'
+          : check.passed ? '✓ All checks passed'
+          : `✗ ${check.errors} error${check.errors !== 1 ? 's' : ''}${check.warnings > 0 ? `, ${check.warnings} warning${check.warnings !== 1 ? 's' : ''}` : ''}`}
+      </span>
+      <span style={{ color: '#9ca3af' }}>·</span>
+      <span style={{ color: '#6b7280' }}>Form: <strong>{payload.form_name}</strong></span>
+      <span style={{ color: '#9ca3af' }}>·</span>
+      <span style={{ color: '#6b7280' }}>{check.fields_extracted} fields extracted · {check.fields_checked} rules checked</span>
+      <button onClick={onReset} style={{ marginLeft: 'auto', fontSize: 11, color: '#3b82f6', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+        ← New check
+      </button>
+    </div>
+  );
+}
+
+// ─── ROLE_GROUPS ─────────────────────────────────────────────────────────────
+
+const ROLE_GROUPS: { role: PartyRole; label: string; color: string }[] = [
+  { role: 'buyer', label: 'Buyers', color: 'text-blue-600' },
+  { role: 'seller', label: 'Sellers', color: 'text-purple-600' },
+  { role: 'agent', label: 'Agents', color: 'text-teal-600' },
+  { role: 'broker', label: 'Broker', color: 'text-amber-600' },
+];
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export default function CompliancePage() {
   const [view, setView] = useState<ViewPage>('upload');
-  const [pkg, setPkg] = useState<TransactionPackage>(MOCK_PACKAGE);
-  const [activeContractId, setActiveContractId] = useState<string>(MOCK_PACKAGE.contracts[0].id);
+  const [pkg, setPkg] = useState<TransactionPackage | null>(null);
+  const [activeContractId, setActiveContractId] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
-
-  const mlsBoard = MLS_LIBRARY.find(b => b.id === pkg.mlsId);
-  const totalPackageIssues = pkg.contracts.reduce((sum, c) => {
-    const missingAddenda = (c.firedTriggers ?? []).filter(t => !t.presentInPackage).length;
-    return sum + c.missingFields.length + missingAddenda;
-  }, 0);
+  const [checkPayload, setCheckPayload] = useState<CheckResultPayload | null>(null);
 
   const NavBar = ({ active }: { active: ViewPage }) => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
@@ -201,10 +210,12 @@ export default function CompliancePage() {
   if (view === 'upload') return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
       <NavBar active="upload" />
-      <UploadPanel onAnalyze={(mlsId, file) => {
+      <UploadPanel onAnalyze={(mlsId, file, result) => {
         setPdfFile(file);
-        setPkg({ ...MOCK_PACKAGE, mlsId, fileName: file.name });
-        setActiveContractId(MOCK_PACKAGE.contracts[0].id);
+        setCheckPayload(result);
+        const built = buildPackageFromResult(file, mlsId, result);
+        setPkg(built);
+        setActiveContractId(built.contracts[0].id);
         setCurrentPage(1);
         setView('report');
       }} />
@@ -218,13 +229,18 @@ export default function CompliancePage() {
     </div>
   );
 
+  if (!pkg) { setView('upload'); return null; }
+
+  const mlsBoard = MLS_LIBRARY.find(b => b.id === pkg.mlsId);
   const contract: Contract = pkg.contracts.find(c => c.id === activeContractId) ?? pkg.contracts[0];
   const totalMissing = contract.missingFields.length;
   const missingAddenda = (contract.firedTriggers ?? []).filter(t => !t.presentInPackage).length;
   const totalIssues = totalMissing + missingAddenda;
+  const totalPackageIssues = pkg.contracts.reduce((s, c) => s + c.missingFields.length + ((c.firedTriggers ?? []).filter(t => !t.presentInPackage).length), 0);
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f9fafb', fontFamily: 'sans-serif' }}>
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#ffffff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -245,10 +261,13 @@ export default function CompliancePage() {
         </div>
       </div>
 
+      {/* Real check banner */}
+      {checkPayload && <RealCheckBanner payload={checkPayload} onReset={() => { setView('upload'); setCheckPayload(null); setPkg(null); }} />}
+
       <ContractTabs contracts={pkg.contracts} activeId={activeContractId} onSelect={(id) => { setActiveContractId(id); setCurrentPage(1); }} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* ── Left sidebar ── */}
+        {/* Left sidebar */}
         <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid #e5e7eb', overflowY: 'auto', padding: 12, background: '#f9fafb', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ borderRadius: 10, padding: 12, background: totalIssues === 0 ? '#f0fdf4' : '#fff5f5', border: `1px solid ${totalIssues === 0 ? '#bbf7d0' : '#fecaca'}` }}>
             <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: totalIssues === 0 ? '#16a34a' : '#dc2626', margin: 0 }}>
@@ -301,7 +320,7 @@ export default function CompliancePage() {
           )}
         </div>
 
-        {/* ── PDF viewer ── */}
+        {/* PDF viewer */}
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <PDFViewer
             pdfFile={pdfFile}
