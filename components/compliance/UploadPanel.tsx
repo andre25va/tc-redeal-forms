@@ -4,11 +4,17 @@ import { MLS_LIBRARY } from '@/lib/compliance/mlsLibrary';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-export interface DotloopHash {
+export type EsigPlatform = 'dotloop' | 'docusign' | 'hellosign' | 'adobe-sign' | 'unknown';
+
+/** A single verified e-signature hash (platform-agnostic) */
+export interface EsigHash {
   signer: string;
   hash: string;
   timestamp: string;
 }
+
+/** @deprecated Use EsigHash — kept for legacy callers */
+export type DotloopHash = EsigHash;
 
 export interface InitialsGridRow {
   page: number;
@@ -27,6 +33,8 @@ export interface VisionViolation {
 export interface VisionCheckResult {
   status: 'COMPLIANT' | 'NON-COMPLIANT';
   method: 'vision-per-page-gpt4o';
+  platform: EsigPlatform;
+  platformLabel: string;
   summary: {
     totalPages: number;
     pagesWithBothInitials: number;
@@ -35,13 +43,15 @@ export interface VisionCheckResult {
     fieldsFilled: string;
     criticalErrors: number;
     warnings: number;
-    dotloopHashes: DotloopHash[];
+    esigHashes: EsigHash[];
+    /** @deprecated use esigHashes */
+    dotloopHashes?: EsigHash[];
   };
   initialsGrid: InitialsGridRow[];
   violations: VisionViolation[];
   pages: any[];
   formSlug: string;
-  isDotloop: boolean;
+  isDotloop: boolean;   // legacy compat alias
   numPages: number;
 }
 
@@ -59,305 +69,195 @@ export interface AcroCheckResult {
 export interface CheckResultPayload {
   form_slug: string;
   form_name: string;
-  page_count: number;
-  detected_fields: number;
-  // one of these is populated depending on which path ran
-  check?: AcroCheckResult;
   vision?: VisionCheckResult;
+  acro?: AcroCheckResult;
 }
 
-interface Props {
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+const PLATFORM_COLORS: Record<EsigPlatform, { bg: string; text: string; border: string }> = {
+  dotloop:      { bg: '#eff6ff', text: '#1d4ed8', border: '#bfdbfe' },
+  docusign:     { bg: '#faf5ff', text: '#7c3aed', border: '#ddd6fe' },
+  hellosign:    { bg: '#f0fdf4', text: '#15803d', border: '#bbf7d0' },
+  'adobe-sign': { bg: '#fff7ed', text: '#c2410c', border: '#fed7aa' },
+  unknown:      { bg: '#f9fafb', text: '#374151', border: '#e5e7eb' },
+};
+
+export function platformBadge(platform: EsigPlatform, label: string) {
+  const c = PLATFORM_COLORS[platform];
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+      background: c.bg, color: c.text, border: `1px solid ${c.border}`,
+    }}>
+      {label}
+    </span>
+  );
+}
+
+// ─── UploadPanel ───────────────────────────────────────────────────────────────
+
+interface UploadPanelProps {
   onAnalyze: (mlsId: string, file: File, result: CheckResultPayload) => void;
 }
 
-type Step = 'form' | 'fingerprinting' | 'checking' | 'picking';
+type UploadState = 'idle' | 'analyzing' | 'error';
 
-interface FingerprintMatch {
-  form_slug: string;
-  name: string;
-  confidence: number;
-  page_count: number;
-}
+export default function UploadPanel({ onAnalyze }: UploadPanelProps) {
+  const [state, setState] = useState<UploadState>('idle');
+  const [mlsId, setMlsId] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const fileRef = useRef<File | null>(null);
 
-function boardStates(board: { state: string }): string[] {
-  return board.state.split('/');
-}
+  async function analyze(file: File) {
+    fileRef.current = file;
+    setState('analyzing');
+    setErrorMsg('');
 
-const UploadPanel: React.FC<Props> = ({ onAnalyze }) => {
-  const [dragging, setDragging] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [step, setStep] = useState<Step>('form');
-  const [error, setError] = useState<string | null>(null);
-  const [selectedState, setSelectedState] = useState('');
-  const [selectedMls, setSelectedMls] = useState('');
-  const [matches, setMatches] = useState<FingerprintMatch[]>([]);
-  const [detectedPages, setDetectedPages] = useState(0);
-  const [pageProgress, setPageProgress] = useState<{ current: number; total: number } | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const states = Array.from(
-    new Set(MLS_LIBRARY.flatMap(b => boardStates(b)))
-  ).sort();
-
-  const boardsForState = selectedState
-    ? MLS_LIBRARY.filter(b => boardStates(b).includes(selectedState))
-    : [];
-
-  const mls = MLS_LIBRARY.find(b => b.id === selectedMls) ?? null;
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (dropped?.type === 'application/pdf') setFile(dropped);
-  };
-
-  const handleAnalyze = async () => {
-    if (!file || !selectedMls) return;
-    setError(null);
-    setStep('fingerprinting');
+    // Simulate page progress messages (real progress comes from server)
+    let pageCounter = 0;
+    const progressInterval = setInterval(() => {
+      pageCounter++;
+      setProgress(`Analyzing page ${pageCounter} with AI vision…`);
+    }, 4500);
 
     try {
-      // Step 1: fingerprint the PDF
-      const fpFd = new FormData();
-      fpFd.append('pdf', file);
-      const fpRes = await fetch('/api/compliance/fingerprint', { method: 'POST', body: fpFd });
-      const fpData = await fpRes.json();
-      if (fpData.error) throw new Error(fpData.error);
+      const fd = new FormData();
+      fd.append('pdf', file);
+      if (mlsId) fd.append('mlsId', mlsId);
 
-      setDetectedPages(fpData.detected_pages ?? 0);
-
-      if (!fpData.matches?.length) {
-        throw new Error('No matching form templates found. Make sure this PDF matches one of your form templates.');
-      }
-
-      if (fpData.matches[0].confidence >= 70) {
-        await runCheck(fpData.matches[0], fpData.detected_fields ?? 0);
-      } else {
-        setMatches(fpData.matches);
-        setStep('picking');
-      }
-    } catch (e: any) {
-      setError(e.message);
-      setStep('form');
-    }
-  };
-
-  const runCheck = async (match: FingerprintMatch, detectedFieldsCount: number) => {
-    setStep('checking');
-    setPageProgress({ current: 0, total: match.page_count || detectedPages });
-
-    try {
-      const checkFd = new FormData();
-      checkFd.append('pdf', file!);
-      checkFd.append('form_slug', match.form_slug);
-
-      // Simulate page progress while waiting (we don't have streaming)
-      const total = match.page_count || detectedPages || 16;
-      let fakeProgress = 0;
-      const progressInterval = setInterval(() => {
-        fakeProgress = Math.min(fakeProgress + 1, total - 1);
-        setPageProgress({ current: fakeProgress, total });
-      }, 4000); // ~4s per page average
-
-      const checkRes = await fetch('/api/compliance/check', { method: 'POST', body: checkFd });
+      const res = await fetch('/api/compliance/check', { method: 'POST', body: fd });
       clearInterval(progressInterval);
 
-      const checkData = await checkRes.json();
-      if (checkData.error) throw new Error(checkData.error);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error ?? 'Check failed');
+      }
 
-      setPageProgress(null);
+      const data: VisionCheckResult = await res.json();
 
-      // Determine if this is a vision result or legacy AcroForm result
-      const isVision = checkData.method === 'vision-per-page-gpt4o';
+      // Normalize: handle both esigHashes (new) and dotloopHashes (legacy)
+      if (data.summary && !data.summary.esigHashes) {
+        data.summary.esigHashes = (data.summary as any).dotloopHashes ?? [];
+      }
 
-      onAnalyze(selectedMls, file!, {
-        form_slug: match.form_slug,
-        form_name: match.name,
-        page_count: match.page_count ?? detectedPages,
-        detected_fields: detectedFieldsCount,
-        ...(isVision ? { vision: checkData as VisionCheckResult } : { check: checkData }),
+      // Derive platform label if missing (old route compat)
+      if (!data.platformLabel) {
+        const labels: Record<string, string> = {
+          dotloop: 'Dotloop', docusign: 'DocuSign',
+          hellosign: 'HelloSign / Dropbox Sign', 'adobe-sign': 'Adobe Sign',
+        };
+        data.platformLabel = labels[data.platform ?? ''] ?? 'E-Signature';
+      }
+
+      // Derive form name from slug
+      const formName = (data.formSlug ?? '')
+        .split('-')
+        .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ') || 'Uploaded Contract';
+
+      onAnalyze(mlsId, file, {
+        form_slug: data.formSlug ?? '',
+        form_name: formName,
+        vision: data,
       });
-    } catch (e: any) {
-      setPageProgress(null);
-      setError(e.message);
-      setStep('form');
+    } catch (err: any) {
+      clearInterval(progressInterval);
+      setErrorMsg(err.message ?? 'Something went wrong');
+      setState('error');
     }
-  };
+  }
 
-  const isLoading = step === 'fingerprinting' || step === 'checking';
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer.files[0];
+    if (f?.type === 'application/pdf') analyze(f);
+  }
 
-  const statusMessage = step === 'fingerprinting'
-    ? 'Identifying form…'
-    : step === 'checking' && pageProgress
-    ? pageProgress.current === 0
-      ? 'Starting AI vision analysis…'
-      : `Analyzing page ${pageProgress.current} of ${pageProgress.total} with AI…`
-    : null;
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (f) analyze(f);
+  }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-8" style={{ background: '#f9fafb' }}>
-      <div className="w-full max-w-xl">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <span className="text-2xl font-bold text-gray-800">Compliance Check</span>
-          </div>
-          <p className="text-gray-400 text-sm">Upload a signed PDF to auto-identify the form and verify all signatures, initials, and required fields</p>
-        </div>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* State + MLS */}
-        <div className="mb-4">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">State</label>
+        {/* MLS selector */}
+        <div>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
+            MLS Board <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+          </label>
           <select
-            value={selectedState}
-            onChange={e => { setSelectedState(e.target.value); setSelectedMls(''); }}
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
+            value={mlsId}
+            onChange={e => setMlsId(e.target.value)}
+            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, color: '#374151', background: '#fff' }}
           >
-            <option value="">— Select a state —</option>
-            {states.map(s => <option key={s} value={s}>{s}</option>)}
+            <option value="">— Select MLS board —</option>
+            {MLS_LIBRARY.map(b => (
+              <option key={b.id} value={b.id}>{b.name} ({b.state})</option>
+            ))}
           </select>
-
-          {selectedState && (
-            <>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 block">MLS Board</label>
-              <select
-                value={selectedMls}
-                onChange={e => setSelectedMls(e.target.value)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">— Select MLS board —</option>
-                {boardsForState.map(b => (
-                  <option key={b.id} value={b.id}>{b.name} — {b.fullName}</option>
-                ))}
-              </select>
-            </>
-          )}
-          {mls && (
-            <div className="mt-2 px-3 py-2 rounded-lg bg-white border border-gray-200 flex items-center gap-3">
-              <div className="flex-1">
-                <p className="text-xs font-medium text-gray-700">{mls.fullName}</p>
-                <p className="text-[11px] text-gray-400">{mls.region} · {mls.state} · {mls.forms.length} form templates in library</p>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Drop zone */}
-        <div
-          className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-            dragging ? 'border-blue-500 bg-blue-50' : file ? 'border-green-400 bg-green-50' : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-blue-50/40'
-          }`}
-          onDragOver={e => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
+        <label
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
-          onClick={() => !isLoading && inputRef.current?.click()}
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            gap: 10, padding: '40px 24px', borderRadius: 12, cursor: 'pointer',
+            border: `2px dashed ${dragOver ? '#3b82f6' : '#d1d5db'}`,
+            background: dragOver ? '#eff6ff' : '#f9fafb',
+            transition: 'all 0.15s',
+          }}
         >
-          <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
-          {file ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center">
-                <svg className="w-7 h-7 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <div>
-                <p className="font-semibold text-gray-800">{file.name}</p>
-                <p className="text-sm text-gray-400">{(file.size / 1024).toFixed(0)} KB · PDF</p>
-              </div>
-              {!isLoading && <p className="text-xs text-gray-300">Click to change file</p>}
-            </div>
+          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={handleFileInput} />
+          {state === 'analyzing' ? (
+            <>
+              <div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTop: '3px solid #3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              <p style={{ fontSize: 13, color: '#374151', margin: 0, fontWeight: 500 }}>Running compliance check…</p>
+              <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{progress || 'Uploading and fingerprinting…'}</p>
+              <p style={{ fontSize: 10, color: '#d1d5db', margin: 0 }}>This may take 1–2 minutes for multi-page documents</p>
+            </>
           ) : (
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
-                <svg className="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            <>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="22" height="22" fill="none" stroke="#3b82f6" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="12" y1="18" x2="12" y2="12"/>
+                  <line x1="9" y1="15" x2="15" y2="15"/>
                 </svg>
               </div>
-              <div>
-                <p className="font-semibold text-gray-700">Drop your PDF here</p>
-                <p className="text-sm text-gray-400">or click to browse</p>
-              </div>
-              <p className="text-xs text-gray-300">Supports DocuSign · Dotloop · Adobe Sign</p>
-            </div>
-          )}
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div className="mt-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
-            ⚠ {error}
-          </div>
-        )}
-
-        {/* Form picker */}
-        {step === 'picking' && matches.length > 0 && (
-          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-800 mb-3">
-              Multiple possible matches for a {detectedPages}-page PDF. Select the correct form:
-            </p>
-            <div className="flex flex-col gap-2">
-              {matches.map(m => (
-                <button
-                  key={m.form_slug}
-                  onClick={() => runCheck(m, 0)}
-                  className="flex items-center justify-between px-4 py-3 rounded-lg bg-white border border-amber-200 hover:border-blue-400 hover:bg-blue-50 text-left transition-all"
-                >
-                  <span className="text-sm font-medium text-gray-800">{m.name}</span>
-                  <span className="text-xs text-gray-400">{m.page_count}p · {m.confidence}% match</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Analyze button */}
-        {step === 'form' && (
-          <button
-            className={`w-full mt-4 py-3 px-6 rounded-xl font-semibold text-sm transition-all ${
-              !file || !selectedMls
-                ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
-            }`}
-            onClick={handleAnalyze}
-            disabled={!file || !selectedMls}
-          >
-            {!selectedMls ? 'Select a state and MLS board to continue' : `Run Compliance Check → ${mls?.name}`}
-          </button>
-        )}
-
-        {/* Loading state with progress */}
-        {statusMessage && (
-          <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <svg className="animate-spin w-4 h-4 text-blue-600 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span className="text-sm font-medium text-blue-700">{statusMessage}</span>
-            </div>
-            {pageProgress && pageProgress.total > 0 && (
-              <>
-                <div className="w-full bg-blue-100 rounded-full h-1.5">
-                  <div
-                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-1000"
-                    style={{ width: `${Math.round((pageProgress.current / pageProgress.total) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-xs text-blue-400 mt-1">
-                  This takes about {Math.round(pageProgress.total * 4 / 60)} minute{pageProgress.total > 15 ? 's' : ''} for a {pageProgress.total}-page document
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: 14, fontWeight: 600, color: '#1f2937', margin: 0 }}>Drop a PDF to check compliance</p>
+                <p style={{ fontSize: 12, color: '#6b7280', margin: '2px 0 0' }}>
+                  Works with Dotloop, DocuSign, Adobe Sign, HelloSign, or any PDF
                 </p>
-              </>
-            )}
-          </div>
-        )}
+              </div>
+              {state === 'error' && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 12px', width: '100%' }}>
+                  <p style={{ fontSize: 12, color: '#dc2626', margin: 0 }}>⚠ {errorMsg}</p>
+                  <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>Click or drop another file to retry</p>
+                </div>
+              )}
+            </>
+          )}
+        </label>
+
+        <p style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', margin: 0 }}>
+          AI reads each page with GPT-4o — initials, signatures, fields, checkboxes
+        </p>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
-};
-
-export default UploadPanel;
+}

@@ -10,6 +10,43 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// ─── E-signature platform detection ──────────────────────────────────────────
+
+export type EsigPlatform = 'dotloop' | 'docusign' | 'hellosign' | 'adobe-sign' | 'unknown';
+
+function detectEsigPlatform(textSample: string): EsigPlatform {
+  const t = textSample.toLowerCase();
+  if (t.includes('dtlp.us') || t.includes('dotloop')) return 'dotloop';
+  if (t.includes('docusign.net') || t.includes('docusign')) return 'docusign';
+  if (t.includes('hellosign.com') || t.includes('dropboxsign.com')) return 'hellosign';
+  if (t.includes('adobesign.com') || t.includes('echosign.com')) return 'adobe-sign';
+  return 'unknown';
+}
+
+const PLATFORM_LABELS: Record<EsigPlatform, string> = {
+  dotloop:     'Dotloop',
+  docusign:    'DocuSign',
+  hellosign:   'HelloSign / Dropbox Sign',
+  'adobe-sign':'Adobe Sign',
+  unknown:     'E-Signature',
+};
+
+/** Returns the platform-specific verification hash pattern hint for the GPT prompt */
+function platformHashHint(platform: EsigPlatform): string {
+  switch (platform) {
+    case 'dotloop':
+      return 'Dotloop verification hashes look like: dtlp.us/XXXX-XXXX-XXXX';
+    case 'docusign':
+      return 'DocuSign verification includes an envelope ID (UUID format) and/or a docusign.net URL';
+    case 'hellosign':
+      return 'HelloSign/Dropbox Sign verification includes a hellosign.com or dropboxsign.com URL';
+    case 'adobe-sign':
+      return 'Adobe Sign verification includes an adobesign.com or echosign.com URL';
+    default:
+      return 'Look for any verification URL, hash, or code stamped near the signature block by the e-signature platform';
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PageResult {
@@ -23,7 +60,7 @@ interface PageResult {
     signer: string | null;
     signed: boolean;
     timestamp: string | null;
-    dotloop_hash: string | null;
+    esig_hash: string | null;      // was dotloop_hash — now platform-agnostic
   }>;
   checkboxes: Array<{
     label: string;
@@ -47,17 +84,24 @@ async function analyzePageWithGPT4o(
   pageBase64: string,
   pageNumber: number,
   totalPages: number,
-  formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null
+  formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
+  platform: EsigPlatform
 ): Promise<PageResult> {
   const initialsRequired = formProfile?.initials_pages?.includes(pageNumber) ?? true;
   const sellerCount = formProfile?.seller_count ?? 1;
   const buyerCount  = formProfile?.buyer_count  ?? 1;
+  const platformLabel = PLATFORM_LABELS[platform];
+  const hashHint = platformHashHint(platform);
 
   const prompt = `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
 
-This is a Dotloop-signed PDF. Dotloop overlays signature/initial stamps and verification hashes (format: dtlp.us/XXXX-XXXX-XXXX) on top of the base PDF.
+This is an electronically signed PDF processed through ${platformLabel}.
+${platformLabel} overlays signature/initial stamps and verification codes on top of the base PDF.
+${hashHint}
 
-${initialsRequired ? `INITIALS REQUIRED ON THIS PAGE: Look for ${sellerCount} seller initial(s) and ${buyerCount} buyer initial(s). They appear as small stamped boxes, typically in the bottom margin or footer.` : `Initials are NOT required on this page.`}
+${initialsRequired
+  ? `INITIALS REQUIRED ON THIS PAGE: Look for ${sellerCount} seller initial(s) and ${buyerCount} buyer initial(s). They appear as small stamped boxes, typically in the bottom margin or footer.`
+  : `Initials are NOT required on this page.`}
 
 Return ONLY valid JSON, no markdown fences, no explanation:
 
@@ -73,7 +117,7 @@ Return ONLY valid JSON, no markdown fences, no explanation:
       "signer": "name or null",
       "signed": boolean,
       "timestamp": "timestamp string or null",
-      "dotloop_hash": "dtlp.us/... or null"
+      "esig_hash": "verification hash/URL/code or null"
     }
   ],
   "checkboxes": [
@@ -99,7 +143,7 @@ Return ONLY valid JSON, no markdown fences, no explanation:
 
 Rules:
 - For checkboxes: look at the visual image carefully — a filled/darkened box is checked, empty outline is unchecked
-- For signatures: a Dotloop signature stamp with a hash = signed; blank line = unsigned
+- For signatures: an e-signature stamp with a verification hash/code = signed; blank line = unsigned
 - For fields: any value including "N/A", "0", dashes = NOT blank; only truly empty = blank
 - Flag missing initials as "error", blank optional fields as "warning"
 - Do not flag unchecked checkboxes as errors unless the contract logic requires one of a pair to be checked`;
@@ -135,7 +179,12 @@ Rules:
   if (!response.ok) {
     const err = await response.text();
     console.error(`GPT-4o error on page ${pageNumber}:`, err);
-    return { page: pageNumber, parseError: true, initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } }, signatures: [], checkboxes: [], filled_fields: [], compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}` }] };
+    return {
+      page: pageNumber, parseError: true,
+      initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } },
+      signatures: [], checkboxes: [], filled_fields: [],
+      compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}` }],
+    };
   }
 
   const data = await response.json();
@@ -146,21 +195,36 @@ Rules:
     return JSON.parse(clean);
   } catch (e) {
     console.error(`JSON parse error on page ${pageNumber}:`, e, '\nRaw:', raw.slice(0, 300));
-    return { page: pageNumber, parseError: true, initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } }, signatures: [], checkboxes: [], filled_fields: [], compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response' }] };
+    return {
+      page: pageNumber, parseError: true,
+      initials: { seller: { present: false, value: null }, buyer: { present: false, value: null } },
+      signatures: [], checkboxes: [], filled_fields: [],
+      compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response' }],
+    };
   }
 }
 
 // ─── Aggregate results across all pages ──────────────────────────────────────
 
-function aggregateResults(pageResults: PageResult[], formSlug: string, initialsPages: number[]) {
-  const errors: Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
+function aggregateResults(
+  pageResults: PageResult[],
+  formSlug: string,
+  initialsPages: number[],
+  platform: EsigPlatform
+) {
+  const errors:   Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
   const warnings: Array<{ page: number; message: string; severity: 'error' | 'warning' | 'info' }> = [];
 
   let totalSigs = 0, signedSigs = 0;
   let totalFields = 0, blankFields = 0;
   let totalBoxes = 0, checkedBoxes = 0;
-  const dotloopHashes: Array<{ signer: string; hash: string; timestamp: string }> = [];
-  const initialsGrid: Array<{ page: number; seller: string | null; buyer: string | null; sellerOk: boolean; buyerOk: boolean }> = [];
+
+  // Platform-agnostic — was "dotloopHashes", now "esigHashes"
+  const esigHashes: Array<{ signer: string; hash: string; timestamp: string }> = [];
+  const initialsGrid: Array<{
+    page: number; seller: string | null; buyer: string | null;
+    sellerOk: boolean; buyerOk: boolean;
+  }> = [];
 
   for (const page of pageResults) {
     if (page.parseError) {
@@ -187,15 +251,21 @@ function aggregateResults(pageResults: PageResult[], formSlug: string, initialsP
       totalSigs++;
       if (sig.signed) {
         signedSigs++;
-        if (sig.dotloop_hash) dotloopHashes.push({ signer: sig.signer ?? sig.label, hash: sig.dotloop_hash, timestamp: sig.timestamp ?? '' });
+        if (sig.esig_hash) {
+          esigHashes.push({
+            signer:    sig.signer ?? sig.label,
+            hash:      sig.esig_hash,
+            timestamp: sig.timestamp ?? '',
+          });
+        }
       } else {
         errors.push({ page: page.page, message: `Unsigned: "${sig.label}"`, severity: 'error' });
       }
     }
 
     // Checkboxes
-    totalBoxes += page.checkboxes.length;
-    checkedBoxes += page.checkboxes.filter(c => c.checked).length;
+    totalBoxes    += page.checkboxes.length;
+    checkedBoxes  += page.checkboxes.filter(c => c.checked).length;
 
     // Fields
     for (const field of page.filled_fields) {
@@ -218,6 +288,8 @@ function aggregateResults(pageResults: PageResult[], formSlug: string, initialsP
   return {
     status: isCompliant ? 'COMPLIANT' : 'NON-COMPLIANT',
     method: 'vision-per-page-gpt4o',
+    platform,                         // ← new field
+    platformLabel: PLATFORM_LABELS[platform],
     summary: {
       totalPages: pageResults.length,
       pagesWithBothInitials: initialsGrid.filter(r => r.sellerOk && r.buyerOk).length,
@@ -226,7 +298,7 @@ function aggregateResults(pageResults: PageResult[], formSlug: string, initialsP
       fieldsFilled: `${totalFields - blankFields}/${totalFields}`,
       criticalErrors: errors.length,
       warnings: warnings.length,
-      dotloopHashes,
+      esigHashes,                     // ← renamed from dotloopHashes
     },
     initialsGrid,
     violations: [...errors, ...warnings],
@@ -248,9 +320,9 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const pdfBytes = new Uint8Array(arrayBuffer);
 
-    // Detect dotloop
+    // Detect e-signature platform from raw text
     const textSample = Buffer.from(pdfBytes).toString('latin1').slice(0, 50000);
-    const isDotloop = textSample.includes('dtlp.us') || textSample.includes('dotloop');
+    const platform = detectEsigPlatform(textSample);
 
     // Load and split into pages with pdf-lib
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
@@ -259,7 +331,6 @@ export async function POST(req: NextRequest) {
     // Fingerprint — match template
     let matchedSlug = formSlug;
     if (!matchedSlug) {
-      // Try to find by page count
       const { data: templates } = await supabase
         .from('form_templates')
         .select('slug, page_count')
@@ -279,7 +350,7 @@ export async function POST(req: NextRequest) {
       if (profile) {
         formProfile = {
           seller_count: profile.seller_count ?? 1,
-          buyer_count: profile.buyer_count ?? 1,
+          buyer_count:  profile.buyer_count  ?? 1,
           initials_pages: profile.initials_pages ?? [],
         };
       }
@@ -297,7 +368,7 @@ export async function POST(req: NextRequest) {
       const pageBytes = await singlePageDoc.save();
       const base64 = Buffer.from(pageBytes).toString('base64');
 
-      const result = await analyzePageWithGPT4o(base64, i + 1, numPages, formProfile);
+      const result = await analyzePageWithGPT4o(base64, i + 1, numPages, formProfile, platform);
       pageResults.push(result);
 
       // Small delay between pages to avoid rate limits
@@ -305,13 +376,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Aggregate
-    const report = aggregateResults(pageResults, matchedSlug, initialsPages);
+    const report = aggregateResults(pageResults, matchedSlug, initialsPages, platform);
 
     return NextResponse.json({
       ...report,
       formSlug: matchedSlug,
-      isDotloop,
       numPages,
+      // Legacy compat alias
+      isDotloop: platform === 'dotloop',
     });
 
   } catch (err: any) {
