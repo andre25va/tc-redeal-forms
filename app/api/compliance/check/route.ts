@@ -21,12 +21,21 @@ function labelFromKey(key: string) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Normalize a field name for fuzzy matching:
+// "Seller Name 1" → "sellername1"
+// "seller_name_1" → "sellername1"
+// "SellerName1"   → "sellername1"
+function normalizeKey(s: string): string {
+  return s.toLowerCase().replace(/[\s_.\-()[\]]/g, '');
+}
+
 export async function POST(req: NextRequest) {
   try {
     const ct = req.headers.get('content-type') ?? '';
     let formSlug = '';
     let extracted: Record<string, string> = {};
     let isFlattened = false;
+    let rawFieldCount = 0;
 
     if (ct.includes('multipart')) {
       const fd = await req.formData();
@@ -39,26 +48,57 @@ export async function POST(req: NextRequest) {
           const pdfDoc = await PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: true });
           const form = pdfDoc.getForm();
           const fields = form.getFields();
+          rawFieldCount = fields.length;
 
           if (fields.length === 0) {
             isFlattened = true;
           } else {
+            // Build a map of normalized name → value from the PDF's AcroForm fields
+            const normalizedExtracted: Record<string, string> = {};
+            const rawExtracted: Record<string, string> = {};
+
             for (const field of fields) {
               const name = field.getName();
               const type = field.constructor.name;
+              let val = '';
               try {
                 if (type === 'PDFTextField') {
-                  extracted[name] = form.getTextField(name).getText() ?? '';
+                  val = form.getTextField(name).getText() ?? '';
                 } else if (type === 'PDFCheckBox') {
-                  extracted[name] = form.getCheckBox(name).isChecked() ? 'yes' : '';
+                  val = form.getCheckBox(name).isChecked() ? 'yes' : '';
                 } else if (type === 'PDFDropdown') {
-                  extracted[name] = form.getDropdown(name).getSelected()[0] ?? '';
+                  val = form.getDropdown(name).getSelected()[0] ?? '';
                 } else if (type === 'PDFRadioGroup') {
-                  extracted[name] = form.getRadioGroup(name).getSelected() ?? '';
+                  val = form.getRadioGroup(name).getSelected() ?? '';
                 } else if (type === 'PDFSignature') {
-                  extracted[name] = '__signature__';
+                  val = '__signature__';
                 }
               } catch {}
+              rawExtracted[name] = val;
+              normalizedExtracted[normalizeKey(name)] = val;
+            }
+
+            // Now fetch our DB keys and try to match:
+            // 1) Exact match on field_key
+            // 2) Normalized match
+            const { data: allCoords } = await supabase
+              .from('field_coordinates')
+              .select('field_key')
+              .eq('form_slug', formSlug);
+
+            for (const coord of (allCoords ?? [])) {
+              const key = coord.field_key;
+              if (rawExtracted[key] !== undefined) {
+                // Exact match
+                extracted[key] = rawExtracted[key];
+              } else {
+                // Normalized match
+                const normKey = normalizeKey(key);
+                const normVal = normalizedExtracted[normKey];
+                if (normVal !== undefined) {
+                  extracted[key] = normVal;
+                }
+              }
             }
           }
         } catch {
@@ -166,6 +206,7 @@ export async function POST(req: NextRequest) {
       fields_extracted: Object.keys(extracted).length,
       fields_checked: (coords ?? []).length,
       rules_checked: (rules ?? []).length,
+      raw_pdf_fields: rawFieldCount,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });

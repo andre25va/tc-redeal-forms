@@ -1,5 +1,5 @@
 export type FieldStatus = 'signed' | 'missing' | 'n/a';
-export type FieldType = 'signature' | 'initial';
+export type FieldType = 'signature' | 'initial' | 'required';
 export type PartyRole = 'buyer' | 'seller' | 'agent' | 'broker';
 
 export interface PartyField {
