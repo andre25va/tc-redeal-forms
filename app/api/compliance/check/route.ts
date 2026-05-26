@@ -139,11 +139,14 @@ Rules:
 
 CRITICAL — filled_fields vs checkboxes separation:
 - NEVER put checkbox lines in filled_fields. If a line contains a checkbox (checked or unchecked), it goes ONLY in the checkboxes array.
+- A line starting with ☑, ✓, ■, □, or typed X followed by label text (e.g. "☑ Check/Electronic Funds Transfer/ACH") is a CHECKBOX LINE — it goes in checkboxes ONLY, never in filled_fields, never flagged blank.
 - filled_fields is ONLY for actual data-entry fields: text boxes, date lines, dollar amount lines, name/address lines, blank lines labeled for typed content.
-- Addenda lists (e.g. "Lead Based Paint Disclosure Addendum", "Seller's Disclosure") are checkboxes — put them in checkboxes, NOT filled_fields.
+- Addenda lists (e.g. "Lead Based Paint Disclosure Addendum", "Seller\'s Disclosure") are checkboxes — put them in checkboxes, NOT filled_fields.
 - Blank spacer lines between paragraphs with no field label are NOT fields — do not include them in filled_fields at all.
 - Only report blank: true in filled_fields when the field has a clear label AND the value area is genuinely empty. Confidence must be >= 0.7 to report blank: true. If unsure, set blank: false.
-- Do NOT flag a line as blank if it contains any checkbox, pre-printed text, or is a section header/divider.`;
+- Do NOT flag a line as blank if it contains any checkbox, pre-printed text, or is a section header/divider.
+- FILLED TEXT ON DOTTED/UNDERLINED BASELINES: Many contract fields use dotted lines or underlines as the input area. If ANY non-whitespace text appears on or immediately above that line (e.g. "Alliance Title", "John Smith", "123 Main St"), the field is FILLED — do NOT flag it blank. Confidence must be >= 0.95 before flagging a line-baseline field as blank.
+- A "Deposited with:" or similar label followed by a company name, person name, or any text value on the dotted/underlined area is FILLED — never blank.`;
 }
 
 // ─── Analyze a single page with GPT-4o ────────────────────────────────────────
