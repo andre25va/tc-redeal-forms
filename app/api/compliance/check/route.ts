@@ -146,7 +146,9 @@ CRITICAL — filled_fields vs checkboxes separation:
 - Only report blank: true in filled_fields when the field has a clear label AND the value area is genuinely empty. Confidence must be >= 0.7 to report blank: true. If unsure, set blank: false.
 - Do NOT flag a line as blank if it contains any checkbox, pre-printed text, or is a section header/divider.
 - FILLED TEXT ON DOTTED/UNDERLINED BASELINES: Many contract fields use dotted lines or underlines as the input area. If ANY non-whitespace text appears on or immediately above that line (e.g. "Alliance Title", "John Smith", "123 Main St"), the field is FILLED — do NOT flag it blank. Confidence must be >= 0.95 before flagging a line-baseline field as blank.
-- A "Deposited with:" or similar label followed by a company name, person name, or any text value on the dotted/underlined area is FILLED — never blank.`;
+- A "Deposited with:" or similar label followed by a company name, person name, or any text value on the dotted/underlined area is FILLED — never blank.
+- E-SIGNATURE DATE FIELDS: When the document has been signed via an e-signature platform (Dotloop, DocuSign, HelloSign, Adobe Sign) and you can see platform date/time badges (e.g. a gray or colored badge showing "05/14/25 6:14 PM CDT"), a DATE line that is adjacent to or below a signature line is NOT blank — the platform badge IS the date stamp. Do NOT flag such DATE lines as BLANK. This applies even if the printed date line itself appears empty, as long as a nearby platform badge provides the date.
+- MULTI-OPTION BROKER DISCLOSURE CHECKBOXES: Lines that list broker relationship options (e.g. "□ Broker acts as a Transaction Broker", "□ Broker acts as a Buyer's Agent", "□ Broker acts as a Seller's Agent", "□ Broker acts as a Disclosed Dual Agent") are checkbox options, NOT fill-in fields. They MUST go in the checkboxes array ONLY and NEVER in filled_fields. Do NOT flag any of these as blank fields.`;
 }
 
 // ─── Analyze a single page with GPT-4o ────────────────────────────────────────

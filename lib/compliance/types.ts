@@ -1,6 +1,6 @@
 // lib/compliance/types.ts
 
-export type ViewPage = 'upload' | 'history' | 'library' | 'report';
+export type ViewPage = 'upload' | 'history' | 'library' | 'report' | 'checklist';
 
 /** Three-tier severity:
  *  error   = definite violation (missing required sig/initials, unsigned)
