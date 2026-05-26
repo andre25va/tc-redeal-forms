@@ -20,16 +20,28 @@ function generateReferenceId(): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { dealId, documentId, source, passedCount, violationCount, warningCount, results } = body;
+    const {
+      dealId,
+      documentId,
+      source,
+      board,
+      filename,
+      passedCount,
+      violationCount,
+      warningCount,
+      results,
+    } = body;
 
     const referenceId = generateReferenceId();
     const supabase = createServiceClient();
 
     const { data, error } = await supabase.from('compliance_checks').insert({
-      deal_id:         dealId || null,
+      deal_id:         dealId    || null,
       document_id:     documentId || null,
       check_type:      'vision',
       source:          source || (dealId ? 'myredeal' : 'standalone'),
+      form_type:       board    || null,
+      filename:        filename || null,
       passed_count:    passedCount    ?? 0,
       violation_count: violationCount ?? 0,
       warning_count:   warningCount   ?? 0,
