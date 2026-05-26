@@ -131,11 +131,19 @@ Confidence guide (0.0–1.0):
 - < 0.5 = very unclear — still report but use severity "review"
 
 Rules:
-- Filled checkbox = checked; empty outline = unchecked
+- Filled checkbox = checked; empty outline = unchecked. A printed checkmark ✓, filled square ■, or typed X inside a box all count as checked.
 - E-sig stamp + verification code = signed; blank line = unsigned
 - N/A, 0, dashes = NOT blank; truly empty lines/boxes = blank
 - Do not flag unchecked checkboxes as errors unless both-option logic requires it
-- If you see a visual stamp/badge with initials and date in the footer, that IS the initials — mark present: true`;
+- If you see a visual stamp/badge with initials and date in the footer, that IS the initials — mark present: true
+
+CRITICAL — filled_fields vs checkboxes separation:
+- NEVER put checkbox lines in filled_fields. If a line contains a checkbox (checked or unchecked), it goes ONLY in the checkboxes array.
+- filled_fields is ONLY for actual data-entry fields: text boxes, date lines, dollar amount lines, name/address lines, blank lines labeled for typed content.
+- Addenda lists (e.g. "Lead Based Paint Disclosure Addendum", "Seller's Disclosure") are checkboxes — put them in checkboxes, NOT filled_fields.
+- Blank spacer lines between paragraphs with no field label are NOT fields — do not include them in filled_fields at all.
+- Only report blank: true in filled_fields when the field has a clear label AND the value area is genuinely empty. Confidence must be >= 0.7 to report blank: true. If unsure, set blank: false.
+- Do NOT flag a line as blank if it contains any checkbox, pre-printed text, or is a section header/divider.`;
 }
 
 // ─── Analyze a single page with GPT-4o ────────────────────────────────────────
