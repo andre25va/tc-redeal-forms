@@ -33,7 +33,7 @@ interface CheckedAdendum {
 }
 
 async function computeCheckedAddenda(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   results: any[],
   board: string
 ): Promise<CheckedAdendum[]> {
