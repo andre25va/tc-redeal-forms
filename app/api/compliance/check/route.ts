@@ -154,9 +154,13 @@ async function analyzePageWithGPT4o(
   pageNumber: number,
   totalPages: number,
   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
-  platform: EsigPlatform
+  platform: EsigPlatform,
+  falsePositives: string[] = []
 ): Promise<PageResult> {
-  const prompt = buildPrompt(pageNumber, totalPages, formProfile, platform);
+  let prompt = buildPrompt(pageNumber, totalPages, formProfile, platform);
+  if (falsePositives.length > 0) {
+    prompt += `\n\nKNOWN FALSE POSITIVES — do NOT flag these as violations or blank fields:\n${falsePositives.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}`;
+  }
 
   let response: Response;
 
@@ -301,12 +305,38 @@ export async function POST(req: NextRequest) {
     const batchStart  = parseInt((formData.get('batchStart') as string) ?? '1', 10);
     const totalPages  = parseInt((formData.get('totalPages') as string) ?? '0', 10);
     let   formSlug    = (formData.get('formSlug')  as string) ?? '';
+    const board       = (formData.get('board')     as string) ?? '';
     let   platform    = ((formData.get('platform') as string) ?? 'unknown') as EsigPlatform;
     let   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null = null;
 
     const rawFormProfile = formData.get('formProfile') as string | null;
     if (rawFormProfile) {
       try { formProfile = JSON.parse(rawFormProfile); } catch {}
+    }
+
+    // ── Load known false positives for this board ─────────────────────────
+    let knownFalsePositives: string[] = [];
+    if (board) {
+      try {
+        const { data: fpRows } = await supabase
+          .from('compliance_feedback')
+          .select('violation_message')
+          .eq('verdict', 'false_positive')
+          .eq('board', board)
+          .limit(50);
+        if (fpRows && fpRows.length > 0) {
+          // Deduplicate by message
+          const seen = new Set<string>();
+          for (const row of fpRows) {
+            if (!seen.has(row.violation_message)) {
+              seen.add(row.violation_message);
+              knownFalsePositives.push(row.violation_message);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[compliance/check] false positive fetch failed:', e);
+      }
     }
 
     // Collect page images (supports both batch keys like pageImage_5 and sequential pageImage_1)
@@ -376,7 +406,8 @@ export async function POST(req: NextRequest) {
         pageNum,
         numPages || totalPages,
         formProfile,
-        platform
+        platform,
+        knownFalsePositives
       );
       pageResults.push(result);
 
