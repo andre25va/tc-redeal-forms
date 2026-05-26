@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Link2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle2, XCircle, AlertTriangle, Link2, RefreshCw, ShieldCheck, CheckSquare } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +11,7 @@ interface CheckRow {
   check_type: 'field' | 'vision' | null;
   source: 'myredeal' | 'standalone' | null;
   form_type: string | null;
+  filename: string | null;
   state: string | null;
   total_rules_checked: number;
   passed_count: number;
@@ -19,6 +20,10 @@ interface CheckRow {
   results: any;
   run_at: string;
   property_address: string | null;
+}
+
+interface CheckHistoryViewProps {
+  onNewCheck?: () => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -71,6 +76,12 @@ function scoreBar(row: CheckRow) {
       )}
     </div>
   );
+}
+
+function dealLabel(row: CheckRow): { text: string; dim: boolean } {
+  if (row.property_address) return { text: row.property_address, dim: false };
+  if (row.filename)         return { text: row.filename,         dim: false };
+  return { text: 'Standalone check', dim: true };
 }
 
 // ─── Expanded Row Detail ──────────────────────────────────────────────────────
@@ -143,7 +154,6 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
 
   return (
     <div style={{ display:'flex', flexWrap:'wrap', gap:8, padding:'10px 16px', borderBottom:'1px solid #e5e7eb', background:'#fff', alignItems:'center' }}>
-      {/* Source */}
       <div style={{ display:'flex', gap:4, alignItems:'center' }}>
         <span style={{ fontSize:10, color:'#9ca3af', fontWeight:600, marginRight:2 }}>SOURCE</span>
         {btn('All',        filters.source === '',           () => onChange({ ...filters, source: '' }))}
@@ -151,7 +161,6 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
         {btn('Standalone', filters.source === 'standalone', () => onChange({ ...filters, source: 'standalone' }))}
       </div>
       <div style={{ width:1, height:16, background:'#e5e7eb' }} />
-      {/* Type */}
       <div style={{ display:'flex', gap:4, alignItems:'center' }}>
         <span style={{ fontSize:10, color:'#9ca3af', fontWeight:600, marginRight:2 }}>TYPE</span>
         {btn('All',    filters.checkType === '',       () => onChange({ ...filters, checkType: '' }))}
@@ -159,7 +168,6 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
         {btn('Field',  filters.checkType === 'field',  () => onChange({ ...filters, checkType: 'field' }))}
       </div>
       <div style={{ width:1, height:16, background:'#e5e7eb' }} />
-      {/* Period */}
       <div style={{ display:'flex', gap:4, alignItems:'center' }}>
         <span style={{ fontSize:10, color:'#9ca3af', fontWeight:600, marginRight:2 }}>PERIOD</span>
         {btn('7d',  filters.days === '7',  () => onChange({ ...filters, days: '7' }))}
@@ -168,7 +176,6 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
         {btn('All', filters.days === '',   () => onChange({ ...filters, days: '' }))}
       </div>
       <div style={{ width:1, height:16, background:'#e5e7eb' }} />
-      {/* Status */}
       <div style={{ display:'flex', gap:4, alignItems:'center' }}>
         <span style={{ fontSize:10, color:'#9ca3af', fontWeight:600, marginRight:2 }}>STATUS</span>
         {btn('All',        filters.status === '',           () => onChange({ ...filters, status: '' }))}
@@ -182,7 +189,7 @@ function FilterBar({ filters, onChange }: { filters: Filters; onChange: (f: Filt
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CheckHistoryView() {
+export default function CheckHistoryView({ onNewCheck }: CheckHistoryViewProps) {
   const [checks, setChecks]       = useState<CheckRow[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
@@ -219,7 +226,6 @@ export default function CheckHistoryView() {
     });
   };
 
-  // ── Summary stats ────────────────────────────────────────────────────────
   const total      = checks.length;
   const passed     = checks.filter(c => c.violation_count === 0 && c.warning_count === 0).length;
   const violations = checks.filter(c => c.violation_count > 0).length;
@@ -228,29 +234,42 @@ export default function CheckHistoryView() {
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', background:'#f9fafb' }}>
 
-      {/* ── Filter bar ── */}
       <FilterBar filters={filters} onChange={setFilters} />
 
       {/* ── Summary strip ── */}
-      {!loading && total > 0 && (
-        <div style={{ display:'flex', gap:16, padding:'8px 16px', background:'#fff', borderBottom:'1px solid #e5e7eb', flexShrink:0 }}>
-          {[
-            { label:'Total checks', value: total, color:'#374151' },
-            { label:'Passed',       value: passed,     color:'#16a34a' },
-            { label:'Violations',   value: violations, color:'#dc2626' },
-            { label:'Linked',       value: linked,     color:'#1d4ed8' },
-          ].map(s => (
-            <div key={s.label} style={{ display:'flex', alignItems:'center', gap:6 }}>
-              <span style={{ fontSize:16, fontWeight:700, color:s.color }}>{s.value}</span>
-              <span style={{ fontSize:11, color:'#9ca3af' }}>{s.label}</span>
-            </div>
-          ))}
-          <button
-            onClick={fetchChecks}
-            style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:6, border:'1px solid #e5e7eb', background:'#fff', cursor:'pointer', fontSize:11, color:'#6b7280' }}
-          >
-            <RefreshCw size={11} /> Refresh
-          </button>
+      {!loading && (
+        <div style={{ display:'flex', gap:16, padding:'8px 16px', background:'#fff', borderBottom:'1px solid #e5e7eb', flexShrink:0, alignItems:'center' }}>
+          {total > 0 && (
+            <>
+              {[
+                { label:'Total checks', value: total,      color:'#374151' },
+                { label:'Passed',       value: passed,     color:'#16a34a' },
+                { label:'Violations',   value: violations, color:'#dc2626' },
+                { label:'Linked',       value: linked,     color:'#1d4ed8' },
+              ].map(s => (
+                <div key={s.label} style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <span style={{ fontSize:16, fontWeight:700, color:s.color }}>{s.value}</span>
+                  <span style={{ fontSize:11, color:'#9ca3af' }}>{s.label}</span>
+                </div>
+              ))}
+            </>
+          )}
+          <div style={{ marginLeft:'auto', display:'flex', gap:6 }}>
+            {onNewCheck && (
+              <button
+                onClick={onNewCheck}
+                style={{ display:'flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:6, border:'1px solid #3b82f6', background:'#eff6ff', cursor:'pointer', fontSize:11, color:'#1d4ed8', fontWeight:600 }}
+              >
+                <CheckSquare size={11} /> New Check
+              </button>
+            )}
+            <button
+              onClick={fetchChecks}
+              style={{ display:'flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:6, border:'1px solid #e5e7eb', background:'#fff', cursor:'pointer', fontSize:11, color:'#6b7280' }}
+            >
+              <RefreshCw size={11} /> Refresh
+            </button>
+          </div>
         </div>
       )}
 
@@ -276,6 +295,14 @@ export default function CheckHistoryView() {
             <ShieldCheck size={32} color="#d1d5db" />
             <p style={{ fontSize:14, fontWeight:600, color:'#9ca3af', margin:0 }}>No compliance checks yet</p>
             <p style={{ fontSize:12, color:'#d1d5db', margin:0 }}>Run your first check using the Check tab above</p>
+            {onNewCheck && (
+              <button
+                onClick={onNewCheck}
+                style={{ marginTop:8, display:'flex', alignItems:'center', gap:6, padding:'8px 16px', borderRadius:8, border:'1px solid #3b82f6', background:'#eff6ff', cursor:'pointer', fontSize:13, color:'#1d4ed8', fontWeight:600 }}
+              >
+                <CheckSquare size={14} /> Go to Check
+              </button>
+            )}
           </div>
         )}
 
@@ -285,7 +312,7 @@ export default function CheckHistoryView() {
               <tr style={{ background:'#f9fafb', borderBottom:'2px solid #e5e7eb' }}>
                 <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em', width:30 }}></th>
                 <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>Deal / Source</th>
-                <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>Form</th>
+                <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>Board / Form</th>
                 <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>Type</th>
                 <th style={{ padding:'8px 16px', textAlign:'left', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>Result</th>
                 <th style={{ padding:'8px 16px', textAlign:'right', color:'#6b7280', fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:'0.05em' }}>When</th>
@@ -295,6 +322,7 @@ export default function CheckHistoryView() {
               {checks.map(row => {
                 const isOpen = expanded.has(row.id);
                 const hasDetail = row.violation_count > 0 || row.warning_count > 0;
+                const label = dealLabel(row);
                 return (
                   <React.Fragment key={row.id}>
                     <tr
@@ -306,7 +334,6 @@ export default function CheckHistoryView() {
                         transition:'background 0.1s',
                       }}
                     >
-                      {/* Expand toggle */}
                       <td style={{ padding:'10px 8px 10px 16px', color:'#9ca3af' }}>
                         {isOpen
                           ? <ChevronDown size={13} />
@@ -317,19 +344,28 @@ export default function CheckHistoryView() {
                       {/* Deal / Source */}
                       <td style={{ padding:'10px 16px' }}>
                         <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                          {row.property_address
-                            ? <span style={{ fontWeight:600, color:'#1f2937', fontSize:12 }}>{row.property_address}</span>
-                            : <span style={{ color:'#9ca3af', fontStyle:'italic', fontSize:11 }}>No address</span>
-                          }
+                          <span style={{
+                            fontWeight: label.dim ? 400 : 600,
+                            color: label.dim ? '#9ca3af' : '#1f2937',
+                            fontStyle: label.dim ? 'italic' : 'normal',
+                            fontSize:12,
+                            maxWidth: 220,
+                            overflow:'hidden',
+                            textOverflow:'ellipsis',
+                            whiteSpace:'nowrap',
+                          }}>
+                            {label.text}
+                          </span>
                           {sourceBadge(row.source)}
                         </div>
                       </td>
 
-                      {/* Form */}
+                      {/* Board / Form */}
                       <td style={{ padding:'10px 16px' }}>
-                        <span style={{ color:'#374151', fontSize:11 }}>
-                          {row.form_type ?? <span style={{ color:'#d1d5db' }}>—</span>}
-                        </span>
+                        {row.form_type
+                          ? <span style={{ color:'#374151', fontSize:11, fontWeight:500 }}>{row.form_type}</span>
+                          : <span style={{ color:'#d1d5db', fontSize:11 }}>—</span>
+                        }
                         {row.state && (
                           <span style={{ marginLeft:4, fontSize:10, color:'#9ca3af' }}>({row.state})</span>
                         )}
@@ -354,7 +390,6 @@ export default function CheckHistoryView() {
                       </td>
                     </tr>
 
-                    {/* Expanded detail */}
                     {isOpen && <tr><td colSpan={6} style={{ padding:0 }}><ExpandedDetail row={row} /></td></tr>}
                   </React.Fragment>
                 );

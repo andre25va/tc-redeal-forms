@@ -14,10 +14,10 @@ function createServiceClient() {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const source    = searchParams.get('source');     // 'myredeal' | 'standalone'
-    const checkType = searchParams.get('check_type'); // 'field' | 'vision'
-    const days      = searchParams.get('days');        // '7' | '30' | '90'
-    const status    = searchParams.get('status');      // 'passed' | 'violations' | 'warnings'
+    const source    = searchParams.get('source');
+    const checkType = searchParams.get('check_type');
+    const days      = searchParams.get('days');
+    const status    = searchParams.get('status');
 
     const supabase = createServiceClient();
 
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
         check_type,
         source,
         form_type,
+        filename,
         state,
         total_rules_checked,
         passed_count,
