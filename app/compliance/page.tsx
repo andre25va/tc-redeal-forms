@@ -139,7 +139,7 @@ function CompliancePageInner() {
               {savedCheckId && (
                 <button
                   onClick={() => setView('checklist')}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: view === 'checklist' ? '#eff6ff' : 'transparent', color: view === 'checklist' ? '#1d4ed8' : '#6b7280' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: (view as string) === 'checklist' ? '#eff6ff' : 'transparent', color: (view as string) === 'checklist' ? '#1d4ed8' : '#6b7280' }}
                 >
                   📋 Checklist
                   {checkedAddendaCount > 0 && (
