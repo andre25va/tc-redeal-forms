@@ -45,8 +45,34 @@ function platformHashHint(platform: EsigPlatform): string {
 
 type Severity = 'error' | 'warning' | 'review';
 
+// NEW: Per-field result keyed to field_coordinates
+export interface FieldResult {
+  field_key: string;
+  label: string;
+  status: 'filled' | 'blank' | 'signed' | 'unsigned' | 'checked' | 'unchecked' | 'na';
+  value: string | null;
+  confidence: number;
+  page: number;
+}
+
+// NEW: Field manifest entry from field_coordinates
+interface FieldManifestEntry {
+  field_key: string;
+  label: string;
+  field_type: string;
+  page_num: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  is_signature: boolean;
+  is_initial: boolean;
+}
+
 export interface PageResult {
   page: number;
+  // NEW: Directed field results — keyed to field_coordinates
+  fieldResults?: FieldResult[];
   initials: {
     seller: { present: boolean; value: string | null; confidence: number };
     buyer:  { present: boolean; value: string | null; confidence: number };
@@ -65,19 +91,103 @@ export interface PageResult {
   parseError?: boolean;
 }
 
+// ─── Fetch field manifest for a page from field_coordinates ──────────────────
+
+async function fetchFieldsForPage(board: string, pageNum: number): Promise<FieldManifestEntry[]> {
+  if (!board) return [];
+  try {
+    const { data, error } = await supabase
+      .from('field_coordinates')
+      .select('field_key, label, field_type, page_num, x, y, width, height, is_signature, is_initial')
+      .eq('mls_board', board)
+      .eq('page_num', pageNum)
+      .not('label', 'is', null)
+      .order('y');
+    if (error || !data) return [];
+    return data as FieldManifestEntry[];
+  } catch (e) {
+    console.warn(`[fetchFieldsForPage] board=${board} page=${pageNum}:`, e);
+    return [];
+  }
+}
+
+// ─── Build field manifest section for prompt ─────────────────────────────────
+
+function buildFieldManifestSection(fields: FieldManifestEntry[]): string {
+  if (fields.length === 0) return '';
+
+  const lines = fields.map(f => {
+    const typeHint = f.is_signature
+      ? 'signature'
+      : f.is_initial
+      ? 'initials'
+      : f.field_type === 'checkbox'
+      ? 'checkbox'
+      : 'text';
+    return `  - field_key: "${f.field_key}", label: "${f.label}", type: ${typeHint}`;
+  }).join('\n');
+
+  return `
+FIELD MANIFEST — You MUST check every field in this list. Return a "fieldResults" array in your JSON response with one entry per field_key below.
+
+Fields on this page (ordered top to bottom):
+${lines}
+
+For each field in the manifest, return:
+{
+  "field_key": "exact_key_from_manifest",
+  "label": "field label",
+  "status": "filled|blank|signed|unsigned|checked|unchecked|na",
+  "value": "what is written/checked/signed, or null if blank/unsigned",
+  "confidence": 0.0-1.0,
+  "page": ${fields[0]?.page_num ?? 0}
+}
+
+Status values:
+- "filled" = text field has content
+- "blank" = text field is genuinely empty
+- "signed" = signature field has a signature
+- "unsigned" = signature field is empty
+- "checked" = checkbox is checked
+- "unchecked" = checkbox is not checked
+- "na" = field is not applicable / crossed out / N/A written
+
+If you cannot find a field on the page despite looking carefully, report status "blank" with confidence 0.5.
+
+Note: Even if you cannot find a field, report it — do NOT omit any field_key from the manifest.
+`;
+}
+
 // ─── Build GPT prompt ─────────────────────────────────────────────────────────
 
 function buildPrompt(
   pageNumber: number,
   totalPages: number,
   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
-  platform: EsigPlatform
+  platform: EsigPlatform,
+  fieldManifest: FieldManifestEntry[] = []
 ): string {
   const initialsRequired = formProfile?.initials_pages?.includes(pageNumber) ?? true;
   const sellerCount = formProfile?.seller_count ?? 1;
   const buyerCount  = formProfile?.buyer_count  ?? 1;
   const platformLabel = PLATFORM_LABELS[platform];
   const hashHint = platformHashHint(platform);
+
+  const hasManifest = fieldManifest.length > 0;
+  const manifestSection = hasManifest ? buildFieldManifestSection(fieldManifest) : '';
+
+  // Add fieldResults to the JSON schema when we have a manifest
+  const fieldResultsSchema = hasManifest ? `
+  "fieldResults": [
+    {
+      "field_key": "exact_key_from_manifest",
+      "label": "field label",
+      "status": "filled|blank|signed|unsigned|checked|unchecked|na",
+      "value": "string or null",
+      "confidence": 0.0-1.0,
+      "page": ${pageNumber}
+    }
+  ],` : '';
 
   return `You are a real estate contract compliance checker analyzing page ${pageNumber} of ${totalPages}.
 
@@ -90,10 +200,12 @@ ${initialsRequired
   ? `INITIALS REQUIRED: Look for ${sellerCount} seller and ${buyerCount} buyer initial stamp(s), typically in the footer or bottom margin. These may appear as image overlays with a colored border, initials text, and a date.`
   : `Initials are NOT required on this page.`}
 
+${manifestSection}
+
 Return ONLY valid JSON, no markdown fences:
 
 {
-  "page": ${pageNumber},
+  "page": ${pageNumber},${fieldResultsSchema}
   "initials": {
     "seller": { "present": boolean, "value": "initials or null", "confidence": 0.0-1.0 },
     "buyer":  { "present": boolean, "value": "initials or null", "confidence": 0.0-1.0 }
@@ -141,14 +253,14 @@ CRITICAL — filled_fields vs checkboxes separation:
 - NEVER put checkbox lines in filled_fields. If a line contains a checkbox (checked or unchecked), it goes ONLY in the checkboxes array.
 - A line starting with ☑, ✓, ■, □, or typed X followed by label text (e.g. "☑ Check/Electronic Funds Transfer/ACH") is a CHECKBOX LINE — it goes in checkboxes ONLY, never in filled_fields, never flagged blank.
 - filled_fields is ONLY for actual data-entry fields: text boxes, date lines, dollar amount lines, name/address lines, blank lines labeled for typed content.
-- Addenda lists (e.g. "Lead Based Paint Disclosure Addendum", "Seller\'s Disclosure") are checkboxes — put them in checkboxes, NOT filled_fields.
+- Addenda lists (e.g. "Lead Based Paint Disclosure Addendum", "Seller\\'s Disclosure") are checkboxes — put them in checkboxes, NOT filled_fields.
 - Blank spacer lines between paragraphs with no field label are NOT fields — do not include them in filled_fields at all.
 - Only report blank: true in filled_fields when the field has a clear label AND the value area is genuinely empty. Confidence must be >= 0.7 to report blank: true. If unsure, set blank: false.
 - Do NOT flag a line as blank if it contains any checkbox, pre-printed text, or is a section header/divider.
 - FILLED TEXT ON DOTTED/UNDERLINED BASELINES: Many contract fields use dotted lines or underlines as the input area. If ANY non-whitespace text appears on or immediately above that line (e.g. "Alliance Title", "John Smith", "123 Main St"), the field is FILLED — do NOT flag it blank. Confidence must be >= 0.95 before flagging a line-baseline field as blank.
 - A "Deposited with:" or similar label followed by a company name, person name, or any text value on the dotted/underlined area is FILLED — never blank.
 - E-SIGNATURE DATE FIELDS: When the document has been signed via an e-signature platform (Dotloop, DocuSign, HelloSign, Adobe Sign) and you can see platform date/time badges (e.g. a gray or colored badge showing "05/14/25 6:14 PM CDT"), a DATE line that is adjacent to or below a signature line is NOT blank — the platform badge IS the date stamp. Do NOT flag such DATE lines as BLANK. This applies even if the printed date line itself appears empty, as long as a nearby platform badge provides the date.
-- MULTI-OPTION BROKER DISCLOSURE CHECKBOXES: Lines that list broker relationship options (e.g. "□ Broker acts as a Transaction Broker", "□ Broker acts as a Buyer's Agent", "□ Broker acts as a Seller's Agent", "□ Broker acts as a Disclosed Dual Agent") are checkbox options, NOT fill-in fields. They MUST go in the checkboxes array ONLY and NEVER in filled_fields. Do NOT flag any of these as blank fields.`;
+- MULTI-OPTION BROKER DISCLOSURE CHECKBOXES: Lines that list broker relationship options (e.g. "□ Broker acts as a Transaction Broker", "□ Broker acts as a Buyer\\'s Agent", "□ Broker acts as a Seller\\'s Agent", "□ Broker acts as a Disclosed Dual Agent") are checkbox options, NOT fill-in fields. They MUST go in the checkboxes array ONLY and NEVER in filled_fields. Do NOT flag any of these as blank fields.`;
 }
 
 // ─── Analyze a single page with GPT-4o ────────────────────────────────────────
@@ -160,9 +272,10 @@ async function analyzePageWithGPT4o(
   totalPages: number,
   formProfile: { seller_count: number; buyer_count: number; initials_pages: number[] } | null,
   platform: EsigPlatform,
-  falsePositives: string[] = []
+  falsePositives: string[] = [],
+  fieldManifest: FieldManifestEntry[] = []
 ): Promise<PageResult> {
-  let prompt = buildPrompt(pageNumber, totalPages, formProfile, platform);
+  let prompt = buildPrompt(pageNumber, totalPages, formProfile, platform, fieldManifest);
   if (falsePositives.length > 0) {
     prompt += `\n\nKNOWN FALSE POSITIVES — do NOT flag these as violations or blank fields:\n${falsePositives.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}`;
   }
@@ -191,7 +304,7 @@ async function analyzePageWithGPT4o(
             { type: 'text', text: prompt },
           ],
         }],
-        max_tokens: 2000,
+        max_tokens: 4000,
       }),
     });
   } else if (pageBase64) {
@@ -215,7 +328,7 @@ async function analyzePageWithGPT4o(
             { type: 'input_text', text: prompt },
           ],
         }],
-        max_output_tokens: 2000,
+        max_output_tokens: 4000,
       }),
     });
   } else {
@@ -225,7 +338,7 @@ async function analyzePageWithGPT4o(
         seller: { present: false, value: null, confidence: 0 },
         buyer:  { present: false, value: null, confidence: 0 },
       },
-      signatures: [], checkboxes: [], filled_fields: [],
+      signatures: [], checkboxes: [], filled_fields: [], fieldResults: [],
       compliance_flags: [{ severity: 'error', message: 'No page data provided', confidence: 1 }],
     };
   }
@@ -239,7 +352,7 @@ async function analyzePageWithGPT4o(
         seller: { present: false, value: null, confidence: 0 },
         buyer:  { present: false, value: null, confidence: 0 },
       },
-      signatures: [], checkboxes: [], filled_fields: [],
+      signatures: [], checkboxes: [], filled_fields: [], fieldResults: [],
       compliance_flags: [{ severity: 'error', message: `GPT-4o API error: ${err.slice(0, 100)}`, confidence: 1 }],
     };
   }
@@ -261,6 +374,31 @@ async function analyzePageWithGPT4o(
     for (const f of parsed.filled_fields ?? []) if (f.confidence == null) f.confidence = 0.9;
     for (const flag of parsed.compliance_flags ?? []) if (flag.confidence == null) flag.confidence = 0.9;
 
+    // Normalize fieldResults — ensure every manifest entry has a result
+    // If GPT missed any field_keys, fill them in as blank/low-confidence
+    if (fieldManifest.length > 0) {
+      const returnedKeys = new Set<string>((parsed.fieldResults ?? []).map((r: any) => r.field_key));
+      const missing = fieldManifest.filter(f => !returnedKeys.has(f.field_key));
+      if (missing.length > 0) {
+        parsed.fieldResults = parsed.fieldResults ?? [];
+        for (const m of missing) {
+          parsed.fieldResults.push({
+            field_key: m.field_key,
+            label: m.label,
+            status: 'blank',
+            value: null,
+            confidence: 0.3, // low confidence — GPT couldn't find it
+            page: pageNumber,
+          });
+        }
+      }
+      // Ensure page is set on all fieldResults
+      for (const r of parsed.fieldResults ?? []) {
+        if (!r.page) r.page = pageNumber;
+        if (r.confidence == null) r.confidence = 0.9;
+      }
+    }
+
     return parsed as PageResult;
   } catch (e) {
     console.error(`JSON parse error on page ${pageNumber}:`, e, '\nRaw:', raw.slice(0, 300));
@@ -270,7 +408,7 @@ async function analyzePageWithGPT4o(
         seller: { present: false, value: null, confidence: 0 },
         buyer:  { present: false, value: null, confidence: 0 },
       },
-      signatures: [], checkboxes: [], filled_fields: [],
+      signatures: [], checkboxes: [], filled_fields: [], fieldResults: [],
       compliance_flags: [{ severity: 'error', message: 'Failed to parse AI response', confidence: 1 }],
     };
   }
@@ -330,7 +468,6 @@ export async function POST(req: NextRequest) {
           .eq('board', board)
           .limit(50);
         if (fpRows && fpRows.length > 0) {
-          // Deduplicate by message
           const seen = new Set<string>();
           for (const row of fpRows) {
             if (!seen.has(row.violation_message)) {
@@ -352,7 +489,7 @@ export async function POST(req: NextRequest) {
       pageImages.set(i, img);
     }
 
-    console.log(`[compliance/check] batchMode=${batchMode} batchStart=${batchStart} totalPages=${totalPages} images=${pageImages.size}`);
+    console.log(`[compliance/check] batchMode=${batchMode} batchStart=${batchStart} totalPages=${totalPages} images=${pageImages.size} board=${board}`);
 
     // ── If we have a PDF, fingerprint it (first batch or non-batch mode) ───
     let numPages = totalPages;
@@ -395,6 +532,12 @@ export async function POST(req: NextRequest) {
     for (const pageNum of pageNumbers) {
       const pageImageBase64 = pageImages.get(pageNum) ?? null;
 
+      // ── Fetch field manifest for this page (if board is known) ──────────
+      const fieldManifest = board ? await fetchFieldsForPage(board, pageNum) : [];
+      if (fieldManifest.length > 0) {
+        console.log(`[compliance/check] page=${pageNum} manifest=${fieldManifest.length} fields`);
+      }
+
       // Extract single-page PDF bytes (for fallback path)
       let pageBase64: string | null = null;
       if (pdfDoc && pageNum <= numPages) {
@@ -412,7 +555,8 @@ export async function POST(req: NextRequest) {
         numPages || totalPages,
         formProfile,
         platform,
-        knownFalsePositives
+        knownFalsePositives,
+        fieldManifest
       );
       pageResults.push(result);
 
@@ -434,9 +578,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── Legacy non-batch mode: run full check for backward compat ─────────
-    // (used by any older callers that pass all page images at once)
-    // Defer to aggregate route logic inline for full result
+    // ── Legacy non-batch mode ─────────────────────────────────────────────
     return NextResponse.json({
       batchResult: true,
       pageResults,
