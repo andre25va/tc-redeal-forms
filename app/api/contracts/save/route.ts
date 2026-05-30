@@ -3,84 +3,73 @@ import { createServiceClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { dealId, formSlug, status, submittedData } = body;
+    const { dealId, formSlug, status, contractUID, submittedData } = await req.json();
 
-    if (!formSlug || !status || !submittedData) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    if (!formSlug) {
+      return NextResponse.json({ error: 'formSlug is required' }, { status: 400 });
     }
 
     const supabase = createServiceClient();
 
-    // Resolve contract_form_id from slug
-    const { data: form, error: formErr } = await supabase
+    // Look up the contract_form id from slug
+    const { data: formRow, error: formErr } = await (supabase as any)
       .from('contract_forms')
       .select('id')
       .eq('form_slug', formSlug)
       .single();
 
-    if (formErr || !form) {
-      return NextResponse.json(
-        { error: `Contract form not found: ${formSlug}` },
-        { status: 404 }
-      );
+    if (formErr || !formRow) {
+      return NextResponse.json({ error: 'Contract form not found for slug: ' + formSlug }, { status: 404 });
     }
 
-    // Upsert: if dealId + formSlug already has a draft, update it
-    let submissionId: string | null = null;
+    // If contractUID already exists in DB, update — otherwise insert
+    const existingUID = submittedData?.contract_uid;
+    let result;
 
-    if (dealId) {
-      const { data: existing } = await supabase
+    if (existingUID) {
+      // Try to find existing draft with this UID
+      const { data: existing } = await (supabase as any)
         .from('contract_submissions')
         .select('id')
-        .eq('deal_id', dealId)
-        .eq('contract_form_id', form.id)
-        .in('status', ['draft'])
+        .eq('submitted_data->>contract_uid', existingUID)
         .maybeSingle();
 
       if (existing?.id) {
-        // Update existing draft
-        const { data: updated, error: upErr } = await supabase
+        const { data, error } = await (supabase as any)
           .from('contract_submissions')
           .update({
-            submitted_data: submittedData,
             status,
+            submitted_data: submittedData,
             updated_at: new Date().toISOString(),
             ...(status === 'submitted' ? { sent_at: new Date().toISOString() } : {}),
           })
           .eq('id', existing.id)
           .select('id')
           .single();
-
-        if (upErr) throw upErr;
-        submissionId = updated?.id ?? null;
+        if (error) throw error;
+        result = data;
       }
     }
 
-    if (!submissionId) {
-      // Create new submission
-      const { data: created, error: createErr } = await supabase
+    if (!result) {
+      // Insert new
+      const { data, error } = await (supabase as any)
         .from('contract_submissions')
         .insert({
           deal_id: dealId || null,
-          contract_form_id: form.id,
-          submitted_data: submittedData,
+          contract_form_id: formRow.id,
           status,
+          submitted_data: submittedData,
           ...(status === 'submitted' ? { sent_at: new Date().toISOString() } : {}),
         })
         .select('id')
         .single();
-
-      if (createErr) throw createErr;
-      submissionId = created?.id ?? null;
+      if (error) throw error;
+      result = data;
     }
 
-    return NextResponse.json({ id: submissionId, status });
+    return NextResponse.json({ id: result.id, status });
   } catch (err: any) {
-    console.error('[contracts/save]', err);
-    return NextResponse.json(
-      { error: err?.message ?? 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
