@@ -1,126 +1,610 @@
 'use client';
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { useForm, UseFormRegister, UseFormWatch, UseFormSetValue } from 'react-hook-form';
+import {
+  ChevronRight, ChevronLeft, CheckCircle2, Building2, DollarSign,
+  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle
+} from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
 
+// ─── Supabase client ──────────────────────────────────────────────────────────
 const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-interface ContractForm {
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface AvailableForm {
   id: string;
-  form_number: number; // display order
+  form_number: number;
   mls_board: string;
   state_code: string;
   form_name: string;
   form_slug: string;
   form_version: string;
-  active: boolean;
 }
 
-type WizardData = Record<string, string | boolean>;
+interface ContractFormData {
+  // Step 1 – Parties & Property
+  seller_name_1: string;
+  seller_name_2: string;
+  buyer_name_1: string;
+  buyer_name_2: string;
+  bank_owned_check: boolean;
+  manufactured_home_check: boolean;
+  property_address: string;
+  county: string;
+  legal_desc_1: string;
+  legal_desc_2: string;
+  legal_desc_3: string;
+  state_code: 'KS' | 'MO' | '';
 
-// Generate unique contract ID
-function generateContractId(): string {
+  // Step 2 – Purchase Price & Earnest
+  purchase_price: string;
+  earnest_money_amount: string;
+  earnest_delivery_days: string;
+  earnest_deposited_with: string;
+  earnest_nonrefundable_check: boolean;
+  add_earnest_amount: string;
+  add_earnest_date: string;
+  buyer_broker_compensation: string;
+  seller_additional_costs: string;
+
+  // Step 3 – Closing & Offer Terms
+  closing_date: string;
+  possession_time: string;
+  possession_am_pm: 'AM' | 'PM' | '';
+  possession_location: string;
+  offer_expiration_date: string;
+  offer_expiration_time: string;
+  cash_appraisal_days: string;
+  appraisal_notify_days: string;
+  appraisal_negotiation_days: string;
+
+  // Step 4 – Financing
+  sale_not_contingent_check: boolean;
+  sale_contingent_check: boolean;
+  cash_sale_check: boolean;
+  financed_sale_check: boolean;
+  cash_sale_verify_days: string;
+  primary_conventional_check: boolean;
+  primary_fha_check: boolean;
+  primary_va_check: boolean;
+  primary_usda_check: boolean;
+  primary_owner_financing_check: boolean;
+  primary_other_check: boolean;
+  primary_other_text: string;
+  primary_rate_fixed_check: boolean;
+  primary_rate_adjustable_check: boolean;
+  primary_amortization_years: string;
+  primary_ltv: string;
+  primary_loan_rate_pct: string;
+  buyer_preapproved_check: boolean;
+  buyer_not_preapproved_check: boolean;
+  lender_name: string;
+  not_preapproved_days: string;
+  loan_approval_days: string;
+  lender_appraisal_amount: string;
+
+  // Step 5 – Inspection, Survey & Warranty
+  inspection_period_days: string;
+  renegotiation_period_days: string;
+  survey_days: string;
+  warranty_waive_check: boolean;
+  limited_home_warranty: boolean;
+  warranty_seller_check: boolean;
+  warranty_buyer_check: boolean;
+  warranty_cost: string;
+  warranty_vendor: string;
+  warranty_deductible: string;
+
+  // Step 6 – Addenda & Additional Terms
+  addendum_sellers_disc_check: boolean;
+  addendum_lead_check: boolean;
+  addendum_contingency_check: boolean;
+  addendum_other_1: string;
+  addendum_other_2: string;
+  addendum_other_3: string;
+  additional_inclusions_1: string;
+  additional_inclusions_2: string;
+  exclusions_1: string;
+  additional_terms_1: string;
+  additional_terms_2: string;
+}
+
+// ─── Step Config ──────────────────────────────────────────────────────────────
+const STEPS = [
+  { id: 1, label: 'Parties & Property', icon: Building2 },
+  { id: 2, label: 'Price & Earnest', icon: DollarSign },
+  { id: 3, label: 'Closing & Terms', icon: Calendar },
+  { id: 4, label: 'Financing', icon: CreditCard },
+  { id: 5, label: 'Inspection & Warranty', icon: Search },
+  { id: 6, label: 'Addenda & Review', icon: FileText },
+];
+
+// ─── Unique contract ID ───────────────────────────────────────────────────────
+function generateContractUid(): string {
   const d = new Date();
-  const date = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-  const rand = Math.random().toString(36).substring(2,6).toUpperCase();
+  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
   return `CTR-${date}-${rand}`;
 }
 
-function ContractsNewInner() {
-  const params = useSearchParams();
-  const router = useRouter();
+// ─── Shared field components ───────────────────────────────────────────────
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{label}</label>
+      {children}
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
+    </div>
+  );
+}
+function Input({ reg, placeholder, type = 'text' }: { reg: any; placeholder?: string; type?: string }) {
+  return (
+    <input
+      {...reg}
+      type={type}
+      placeholder={placeholder}
+      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+    />
+  );
+}
+function CheckRow({ reg, label }: { reg: any; label: string }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <input {...reg} type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+      <span className="text-sm text-gray-700">{label}</span>
+    </label>
+  );
+}
+function RadioGroup({ name, options, value, onChange }: {
+  name: string; options: { val: string; label: string }[]; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-3">
+      {options.map(o => (
+        <label key={o.val} className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={name}
+            checked={value === o.val}
+            onChange={() => onChange(o.val)}
+            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-700">{o.label}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
 
-  // URL params from TC app
-  const dealId   = params.get('dealId') ?? '';
-  const address  = params.get('address') ?? '';
-  const buyerPre = params.get('buyer') ?? '';
-  const sellerPre= params.get('seller') ?? '';
-  const closingPre = params.get('closing') ?? '';
-  const preformSlug = params.get('form') ?? '';
-  const stateParam  = params.get('state') ?? '';
+// ─── Step 1: Parties & Property ───────────────────────────────────────────────
+function Step1({ register, watch, setValue, stateCode }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+  setValue: UseFormSetValue<ContractFormData>;
+  stateCode: string;
+}) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="md:col-span-2">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">State</span>
+          {stateCode && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${stateCode === 'KS' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+              {stateCode === 'KS' ? 'Kansas' : 'Missouri'} Auto-Detected
+            </span>
+          )}
+        </div>
+        <RadioGroup
+          name="state_code"
+          options={[{ val: 'KS', label: 'Kansas' }, { val: 'MO', label: 'Missouri' }]}
+          value={watch('state_code') || stateCode}
+          onChange={v => setValue('state_code', v as 'KS' | 'MO')}
+        />
+        {watch('state_code') === 'MO' && (
+          <p className="text-xs text-purple-600 mt-1 flex items-center gap-1">
+            <AlertCircle size={11} /> Missouri: Option period applies. Dual agency allowed with written consent.
+          </p>
+        )}
+        {watch('state_code') === 'KS' && (
+          <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+            <AlertCircle size={11} /> Kansas: No dual agency. Seller disclosure required by law. Radon disclosure required.
+          </p>
+        )}
+      </div>
 
-  // Form selection state
-  const [forms, setForms] = useState<ContractForm[]>([]);
-  const [loadingForms, setLoadingForms] = useState(true);
+      <Field label="Seller 1 Name / Marital Status">
+        <Input reg={register('seller_name_1')} placeholder="e.g. John Smith, a married person" />
+      </Field>
+      <Field label="Seller 2 Name / Marital Status">
+        <Input reg={register('seller_name_2')} placeholder="(if applicable)" />
+      </Field>
+      <Field label="Buyer 1 Name / Marital Status">
+        <Input reg={register('buyer_name_1')} placeholder="e.g. Jane Doe, a single person" />
+      </Field>
+      <Field label="Buyer 2 Name / Marital Status">
+        <Input reg={register('buyer_name_2')} placeholder="(if applicable)" />
+      </Field>
+
+      <div className="md:col-span-2">
+        <Field label="Property Address">
+          <Input reg={register('property_address')} placeholder="Full street address" />
+        </Field>
+      </div>
+      <Field label="County">
+        <Input reg={register('county')} placeholder="County name" />
+      </Field>
+      <Field label="Legal Description (Line 1)">
+        <Input reg={register('legal_desc_1')} placeholder="Lot/Block/Subdivision" />
+      </Field>
+      <Field label="Legal Description (Line 2)">
+        <Input reg={register('legal_desc_2')} placeholder="(continued)" />
+      </Field>
+      <Field label="Legal Description (Line 3)">
+        <Input reg={register('legal_desc_3')} placeholder="(continued)" />
+      </Field>
+
+      <div className="md:col-span-2 flex gap-6">
+        <CheckRow reg={register('bank_owned_check')} label="Bank-Owned / REO Property" />
+        <CheckRow reg={register('manufactured_home_check')} label="Manufactured Home" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2: Purchase Price & Earnest ─────────────────────────────────────────
+function Step2({ register }: { register: UseFormRegister<ContractFormData> }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <Field label="Purchase Price ($)">
+        <Input reg={register('purchase_price')} placeholder="0.00" type="text" />
+      </Field>
+      <div /> {/* spacer */}
+      <Field label="Earnest Money Amount ($)">
+        <Input reg={register('earnest_money_amount')} placeholder="0.00" />
+      </Field>
+      <Field label="Earnest Money Delivery (days)">
+        <Input reg={register('earnest_delivery_days')} placeholder="e.g. 3" />
+      </Field>
+      <Field label="Earnest Money Deposited With">
+        <Input reg={register('earnest_deposited_with')} placeholder="Title company or escrow agent name" />
+      </Field>
+      <div className="flex items-end gap-4">
+        <CheckRow reg={register('earnest_nonrefundable_check')} label="Earnest Money Non-Refundable" />
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Additional Earnest Money (optional)</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Additional Earnest Amount ($)">
+            <Input reg={register('add_earnest_amount')} placeholder="0.00" />
+          </Field>
+          <Field label="Additional Earnest Due Date">
+            <Input reg={register('add_earnest_date')} type="date" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Cost Allocation</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Buyer&apos;s Broker Compensation ($)">
+            <Input reg={register('buyer_broker_compensation')} placeholder="0.00" />
+          </Field>
+          <Field label="Seller Additional Costs ($)">
+            <Input reg={register('seller_additional_costs')} placeholder="0.00" />
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 3: Closing & Offer Terms ────────────────────────────────────────────
+function Step3({ register }: { register: UseFormRegister<ContractFormData> }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <Field label="Closing Date">
+        <Input reg={register('closing_date')} type="date" />
+      </Field>
+      <Field label="Possession Time">
+        <Input reg={register('possession_time')} placeholder="e.g. 5:00" />
+      </Field>
+      <Field label="AM / PM">
+        <select
+          {...register('possession_am_pm')}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+        >
+          <option value="">Select</option>
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </select>
+      </Field>
+      <Field label="Possession Location">
+        <Input reg={register('possession_location')} placeholder="e.g. At closing, At recording, etc." />
+      </Field>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Offer Expiration</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Offer Expiration Date">
+            <Input reg={register('offer_expiration_date')} type="date" />
+          </Field>
+          <Field label="Offer Expiration Time">
+            <Input reg={register('offer_expiration_time')} placeholder="e.g. 5:00 PM" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Appraisal Deadlines</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Cash Appraisal Deadline (days)">
+            <Input reg={register('cash_appraisal_days')} placeholder="e.g. 14" />
+          </Field>
+          <Field label="Appraisal Notification (days)">
+            <Input reg={register('appraisal_notify_days')} placeholder="e.g. 3" />
+          </Field>
+          <Field label="Appraisal Negotiation (days)">
+            <Input reg={register('appraisal_negotiation_days')} placeholder="e.g. 5" />
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 4: Financing ────────────────────────────────────────────────────────
+function Step4({ register, watch, setValue }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+  setValue: UseFormSetValue<ContractFormData>;
+}) {
+  const isCash = watch('cash_sale_check');
+  const isFinanced = watch('financed_sale_check');
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Sale Contingency</p>
+        <div className="flex gap-6">
+          <CheckRow reg={register('sale_not_contingent_check')} label="NOT contingent on sale of other property" />
+          <CheckRow reg={register('sale_contingent_check')} label="IS contingent on sale of other property" />
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Sale Type</p>
+        <div className="flex gap-6 mb-3">
+          <CheckRow reg={register('cash_sale_check')} label="Cash Sale" />
+          <CheckRow reg={register('financed_sale_check')} label="Financed Sale" />
+        </div>
+        {isCash && (
+          <Field label="Cash Verification Deadline (days)">
+            <Input reg={register('cash_sale_verify_days')} placeholder="e.g. 5" />
+          </Field>
+        )}
+      </div>
+
+      {isFinanced && (
+        <>
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Primary Loan Type</p>
+            <div className="flex flex-wrap gap-4">
+              <CheckRow reg={register('primary_conventional_check')} label="Conventional" />
+              <CheckRow reg={register('primary_fha_check')} label="FHA" />
+              <CheckRow reg={register('primary_va_check')} label="VA" />
+              <CheckRow reg={register('primary_usda_check')} label="USDA" />
+              <CheckRow reg={register('primary_owner_financing_check')} label="Owner Financing" />
+              <CheckRow reg={register('primary_other_check')} label="Other" />
+            </div>
+            {watch('primary_other_check') && (
+              <div className="mt-3">
+                <Field label="Other Loan Type (describe)">
+                  <Input reg={register('primary_other_text')} placeholder="Describe loan type" />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Rate Type</p>
+            <div className="flex gap-6 mb-3">
+              <CheckRow reg={register('primary_rate_fixed_check')} label="Fixed" />
+              <CheckRow reg={register('primary_rate_adjustable_check')} label="Adjustable" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-3">
+              <Field label="Amortization (years)">
+                <Input reg={register('primary_amortization_years')} placeholder="e.g. 30" />
+              </Field>
+              <Field label="LTV (%)">
+                <Input reg={register('primary_ltv')} placeholder="e.g. 95" />
+              </Field>
+              <Field label="Loan Rate (%)">
+                <Input reg={register('primary_loan_rate_pct')} placeholder="e.g. 7.25" />
+              </Field>
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pre-Approval Status</p>
+            <div className="flex gap-6 mb-3">
+              <CheckRow reg={register('buyer_preapproved_check')} label="Buyer is Pre-Approved" />
+              <CheckRow reg={register('buyer_not_preapproved_check')} label="Buyer is NOT Pre-Approved" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <Field label="Lender Name">
+                <Input reg={register('lender_name')} placeholder="Lender name" />
+              </Field>
+              <Field label="Loan Approval Deadline (days)">
+                <Input reg={register('loan_approval_days')} placeholder="e.g. 21" />
+              </Field>
+              {watch('buyer_not_preapproved_check') && (
+                <Field label="Pre-Approval Deadline (days)">
+                  <Input reg={register('not_preapproved_days')} placeholder="e.g. 7" />
+                </Field>
+              )}
+              <Field label="Lender Appraisal Amount ($)">
+                <Input reg={register('lender_appraisal_amount')} placeholder="0.00" />
+              </Field>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Step 5: Inspection, Survey & Warranty ───────────────────────────────────
+function Step5({ register, watch }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+}) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Inspection & Survey</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Inspection Period (days)">
+            <Input reg={register('inspection_period_days')} placeholder="e.g. 10" />
+          </Field>
+          <Field label="Renegotiation Period (days)">
+            <Input reg={register('renegotiation_period_days')} placeholder="e.g. 5" />
+          </Field>
+          <Field label="Survey Deadline (days)">
+            <Input reg={register('survey_days')} placeholder="e.g. 14" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Home Warranty</p>
+        <div className="flex gap-6 mb-4">
+          <CheckRow reg={register('limited_home_warranty')} label="Include Home Warranty" />
+          <CheckRow reg={register('warranty_waive_check')} label="Waive Home Warranty" />
+        </div>
+        {watch('limited_home_warranty') && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="flex gap-6 items-center">
+              <CheckRow reg={register('warranty_seller_check')} label="Paid by Seller" />
+              <CheckRow reg={register('warranty_buyer_check')} label="Paid by Buyer" />
+            </div>
+            <div />
+            <Field label="Warranty Cost ($)">
+              <Input reg={register('warranty_cost')} placeholder="0.00" />
+            </Field>
+            <Field label="Deductible ($)">
+              <Input reg={register('warranty_deductible')} placeholder="0.00" />
+            </Field>
+            <Field label="Warranty Vendor">
+              <Input reg={register('warranty_vendor')} placeholder="Warranty company name" />
+            </Field>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 6: Addenda & Review ─────────────────────────────────────────────────
+function Step6({ register, watch }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+}) {
+  const data = watch();
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Standard Addenda</p>
+        <div className="flex flex-col gap-2">
+          <CheckRow reg={register('addendum_sellers_disc_check')} label="Seller's Disclosure Addendum" />
+          <CheckRow reg={register('addendum_lead_check')} label="Lead-Based Paint Addendum" />
+          <CheckRow reg={register('addendum_contingency_check')} label="Sale Contingency Addendum" />
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Other Addenda</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Other Addendum 1">
+            <Input reg={register('addendum_other_1')} placeholder="Addendum name" />
+          </Field>
+          <Field label="Other Addendum 2">
+            <Input reg={register('addendum_other_2')} placeholder="Addendum name" />
+          </Field>
+          <Field label="Other Addendum 3">
+            <Input reg={register('addendum_other_3')} placeholder="Addendum name" />
+          </Field>
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Inclusions & Exclusions</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Additional Inclusions (1)">
+            <Input reg={register('additional_inclusions_1')} placeholder="Items included in sale" />
+          </Field>
+          <Field label="Additional Inclusions (2)">
+            <Input reg={register('additional_inclusions_2')} placeholder="Items included in sale" />
+          </Field>
+          <Field label="Exclusions (1)">
+            <Input reg={register('exclusions_1')} placeholder="Items excluded from sale" />
+          </Field>
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Additional Terms</p>
+        <div className="flex flex-col gap-3">
+          <Input reg={register('additional_terms_1')} placeholder="Additional terms (line 1)" />
+          <Input reg={register('additional_terms_2')} placeholder="Additional terms (line 2)" />
+        </div>
+      </div>
+      <div className="border-t pt-4 bg-gray-50 rounded-xl p-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Quick Review</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          {[
+            { label: 'Property', value: data.property_address || '—' },
+            { label: 'Purchase Price', value: data.purchase_price ? `$${data.purchase_price}` : '—' },
+            { label: 'Closing Date', value: data.closing_date || '—' },
+            { label: 'Earnest Money', value: data.earnest_money_amount ? `$${data.earnest_money_amount}` : '—' },
+            { label: 'Sale Type', value: data.cash_sale_check ? 'Cash' : data.financed_sale_check ? 'Financed' : '—' },
+            { label: 'Inspection (days)', value: data.inspection_period_days || '—' },
+            { label: 'State', value: data.state_code || '—' },
+            { label: 'Lender', value: data.lender_name || '—' },
+          ].map(item => (
+            <div key={item.label} className="bg-white rounded-lg border border-gray-200 p-2">
+              <p className="text-gray-400 mb-0.5">{item.label}</p>
+              <p className="font-semibold text-gray-800 truncate">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Form Picker ──────────────────────────────────────────────────────────────
+function FormPicker({ onSelect }: { onSelect: (form: AvailableForm) => void }) {
+  const [forms, setForms] = useState<AvailableForm[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedForm, setSelectedForm] = useState<ContractForm | null>(null);
-  const [showPicker, setShowPicker] = useState(!preformSlug);
 
-  // Wizard state
-  const [step, setStep] = useState(1);
-  const [data, setData] = useState<WizardData>({
-    buyerName:          buyerPre,
-    sellerName:         sellerPre,
-    propertyAddress:    address,
-    closingDate:        closingPre,
-    purchasePrice:      '',
-    earnestMoney:       '',
-    earnestDueDate:     '',
-    closingCity:        '',
-    closingCosts:       'split',
-    possessionDate:     '',
-    possessionTime:     'closing',
-    financeType:        'conventional',
-    loanAmount:         '',
-    loanTerm:           '30',
-    interestRate:       '',
-    financeContingency: true,
-    financeContDays:    '21',
-    appraisalContingency: true,
-    appraisalContDays:  '14',
-    inspectionDays:     '10',
-    inspectionContingency: true,
-    saleContingency:    false,
-    saleContingencyAddress: '',
-    saleContingencyDays: '',
-    optionPeriod:       false,
-    optionDays:         '10',
-    optionFee:          '',
-    homeWarranty:       false,
-    homeWarrantyAmount: '',
-    homeWarrantyPaidBy: 'seller',
-    addendaHOA:         false,
-    addendaLead:        false,
-    addendaRadon:       false,
-    addendaInspection:  false,
-    addendaSeptic:      false,
-    addendaMold:        false,
-    additionalTerms:    '',
-  });
-
-  const [submitting, setSaving] = useState(false);
-  const [savedId, setSavedId] = useState('');
-  const [contractUid, setContractUid] = useState('');
-  const [error, setError] = useState('');
-
-  const isMO = (stateParam || '').toUpperCase() === 'MO' ||
-    (data.propertyAddress as string)?.match(/,\s*MO\b/i) !== null;
-  const isKS = !isMO;
-
-  // Load all active forms
   useEffect(() => {
     (async () => {
-      const { data: rows, error } = await supabase
+      const { data } = await supabase
         .from('contract_forms')
-        .select('id, mls_board, state_code, form_name, form_slug, form_version, active')
+        .select('id, mls_board, state_code, form_name, form_slug, form_version')
         .eq('active', true)
         .order('created_at', { ascending: true });
-      if (rows) {
-        const numbered = rows.map((r, i) => ({ ...r, form_number: i + 1 }));
-        setForms(numbered);
-        if (preformSlug) {
-          const match = numbered.find(f => f.form_slug === preformSlug);
-          if (match) { setSelectedForm(match); setShowPicker(false); }
-        }
+      if (data) {
+        setForms(data.map((r, i) => ({ ...r, form_number: i + 1 })));
       }
-      setLoadingForms(false);
+      setLoading(false);
     })();
-  }, [preformSlug]);
+  }, []);
 
-  const filteredForms = useMemo(() => {
+  const filtered = useMemo(() => {
     if (!search.trim()) return forms;
     const q = search.toLowerCase();
     return forms.filter(f =>
@@ -131,578 +615,51 @@ function ContractsNewInner() {
     );
   }, [forms, search]);
 
-  function up(field: string, value: string | boolean) {
-    setData(prev => ({ ...prev, [field]: value }));
-  }
-
-  const totalSteps = 6;
-
-  async function handleSave(isDraft: boolean) {
-    setSaving(true); setError('');
-    try {
-      const uid = contractUid || generateContractId();
-      if (!contractUid) setContractUid(uid);
-
-      const payload = {
-        deal_id: dealId || null,
-        contract_form_id: selectedForm?.id,
-        submitted_data: { ...data, contract_uid: uid },
-        status: isDraft ? 'draft' : 'submitted',
-        ...(savedId ? {} : { id: undefined }),
-      };
-
-      let result;
-      if (savedId) {
-        const { data: row, error: e } = await supabase
-          .from('contract_submissions')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', savedId)
-          .select('id')
-          .single();
-        if (e) throw e;
-        result = row;
-      } else {
-        const { data: row, error: e } = await supabase
-          .from('contract_submissions')
-          .insert(payload)
-          .select('id')
-          .single();
-        if (e) throw e;
-        result = row;
-        setSavedId(result.id);
-      }
-
-      if (!isDraft) setStep(7); // confirmation
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Save failed');
-    }
-    setSaving(false);
-  }
-
-  // ─── FORM PICKER ────────────────────────────────────────────────────────────
-  if (showPicker) {
-    return (
-      <div className="min-h-screen bg-base-200 flex items-center justify-center p-4">
-        <div className="card bg-base-100 shadow-xl w-full max-w-lg">
-          <div className="card-body">
-            <h1 className="card-title text-2xl mb-1">New Contract</h1>
-            <p className="text-base-content/60 text-sm mb-4">
-              Select the contract form for this transaction.
-            </p>
-
-            {/* Search */}
-            <div className="form-control mb-3">
-              <div className="input-group">
-                <span className="bg-base-200 px-3 flex items-center">🔍</span>
-                <input
-                  type="text"
-                  className="input input-bordered w-full"
-                  placeholder="Search by form name, board, or state..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            {loadingForms ? (
-              <div className="text-center py-8 text-base-content/50">Loading forms…</div>
-            ) : filteredForms.length === 0 ? (
-              <div className="text-center py-8 text-base-content/50">No forms match &quot;{search}&quot;</div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
-                {filteredForms.map(f => (
-                  <button
-                    key={f.id}
-                    className="btn btn-outline justify-start gap-3 text-left h-auto py-3 normal-case"
-                    onClick={() => { setSelectedForm(f); setShowPicker(false); }}
-                  >
-                    <span className="badge badge-primary badge-sm font-mono min-w-[2.5rem]">
-                      #{f.form_number}
-                    </span>
-                    <span className="flex flex-col items-start gap-0.5">
-                      <span className="font-semibold">{f.form_name}</span>
-                      <span className="text-xs text-base-content/50">
-                        {f.mls_board} · {f.state_code} · v{f.form_version}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {dealId && (
-              <p className="text-xs text-base-content/40 mt-4">Deal ID: {dealId}</p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── CONFIRMATION ────────────────────────────────────────────────────────────
-  if (step === 7) {
-    return (
-      <div className="min-h-screen bg-base-200 flex items-center justify-center p-4">
-        <div className="card bg-base-100 shadow-xl w-full max-w-md text-center">
-          <div className="card-body gap-4">
-            <div className="text-5xl">✅</div>
-            <h2 className="text-2xl font-bold">Contract Submitted</h2>
-            <div className="badge badge-primary badge-lg font-mono text-base px-4 py-3">
-              {contractUid}
-            </div>
-            <p className="text-base-content/60 text-sm">
-              Your contract ID above is the permanent reference for this submission.
-              The TC app will update the deal&apos;s contract status automatically.
-            </p>
-            <div className="bg-base-200 rounded-lg p-4 text-left text-sm space-y-1">
-              <div><span className="font-semibold">Form:</span> {selectedForm?.form_name}</div>
-              <div><span className="font-semibold">Property:</span> {data.propertyAddress as string}</div>
-              <div><span className="font-semibold">Buyer:</span> {data.buyerName as string}</div>
-              <div><span className="font-semibold">Seller:</span> {data.sellerName as string}</div>
-              <div><span className="font-semibold">Price:</span> ${(data.purchasePrice as string).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</div>
-              <div><span className="font-semibold">Closing:</span> {data.closingDate as string}</div>
-            </div>
-            {dealId && (
-              <button className="btn btn-primary" onClick={() => router.back()}>
-                ← Back to Deal
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── WIZARD ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-base-200 p-4">
-      <div className="max-w-2xl mx-auto">
-
-        {/* Header */}
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <button className="btn btn-ghost btn-xs" onClick={() => setShowPicker(true)}>←</button>
-              <h1 className="text-xl font-bold">{selectedForm?.form_name}</h1>
-              <span className="badge badge-outline badge-sm font-mono">
-                Form #{selectedForm?.form_number}
-              </span>
-            </div>
-            {contractUid && (
-              <span className="text-xs font-mono text-primary">{contractUid}</span>
-            )}
-            {address && <p className="text-sm text-base-content/60 mt-0.5">{address}</p>}
-          </div>
-          <div className="text-right text-sm text-base-content/50">
-            Step {step} of {totalSteps}
-          </div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" style={{ fontFamily: 'sans-serif' }}>
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm w-full max-w-lg p-6">
+        <div className="mb-5">
+          <h1 className="text-xl font-bold text-gray-900">New Contract</h1>
+          <p className="text-sm text-gray-500 mt-1">Select the contract form for this transaction.</p>
         </div>
 
-        {/* Progress */}
-        <div className="flex gap-1 mb-6">
-          {Array.from({length: totalSteps}, (_,i) => (
-            <div
-              key={i}
-              className={`flex-1 h-1.5 rounded-full transition-all ${
-                i+1 < step ? 'bg-success' : i+1 === step ? 'bg-primary' : 'bg-base-300'
-              }`}
-            />
-          ))}
+        {/* Search */}
+        <div className="relative mb-4">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            className="w-full border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            placeholder="Search by form name, board, or state..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            autoFocus
+          />
         </div>
 
-        {/* State Banner */}
-        {isMO && (
-          <div className="alert alert-info text-sm mb-4 py-2">
-            <span>🏛️ <strong>Missouri:</strong> Dual agency allowed (written consent required). Option period is contractually defined.</span>
+        {loading ? (
+          <div className="flex items-center justify-center py-10 text-gray-400 gap-2">
+            <Loader2 size={16} className="animate-spin" /> Loading forms...
           </div>
-        )}
-        {isKS && (
-          <div className="alert alert-warning text-sm mb-4 py-2">
-            <span>🏛️ <strong>Kansas:</strong> Dual agency is NOT permitted. Seller disclosure &amp; radon disclosure required by law.</span>
-          </div>
-        )}
-
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body gap-5">
-
-            {/* ── STEP 1: PARTIES ─────────────────────────────────────── */}
-            {step === 1 && (
-              <>
-                <h2 className="text-lg font-bold">Step 1 — Parties &amp; Property</h2>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Buyer Name(s)</span></label>
-                  <input className="input input-bordered" value={data.buyerName as string}
-                    onChange={e => up('buyerName', e.target.value)} placeholder="Full legal name(s)" />
-                </div>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Seller Name(s)</span></label>
-                  <input className="input input-bordered" value={data.sellerName as string}
-                    onChange={e => up('sellerName', e.target.value)} placeholder="Full legal name(s)" />
-                </div>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Property Address</span></label>
-                  <input className="input input-bordered" value={data.propertyAddress as string}
-                    onChange={e => up('propertyAddress', e.target.value)} placeholder="Full street address, City, State, ZIP" />
-                </div>
-              </>
-            )}
-
-            {/* ── STEP 2: PRICE & CLOSING ─────────────────────────────── */}
-            {step === 2 && (
-              <>
-                <h2 className="text-lg font-bold">Step 2 — Price &amp; Closing</h2>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Purchase Price ($)</span></label>
-                  <input className="input input-bordered" type="number" value={data.purchasePrice as string}
-                    onChange={e => up('purchasePrice', e.target.value)} placeholder="e.g. 350000" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Earnest Money ($)</span></label>
-                    <input className="input input-bordered" type="number" value={data.earnestMoney as string}
-                      onChange={e => up('earnestMoney', e.target.value)} placeholder="e.g. 5000" />
-                  </div>
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Earnest Due Date</span></label>
-                    <input className="input input-bordered" type="date" value={data.earnestDueDate as string}
-                      onChange={e => up('earnestDueDate', e.target.value)} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Closing Date</span></label>
-                    <input className="input input-bordered" type="date" value={data.closingDate as string}
-                      onChange={e => up('closingDate', e.target.value)} />
-                  </div>
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Closing City</span></label>
-                    <input className="input input-bordered" value={data.closingCity as string}
-                      onChange={e => up('closingCity', e.target.value)} placeholder="City where closing occurs" />
-                  </div>
-                </div>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Closing Costs</span></label>
-                  <select className="select select-bordered" value={data.closingCosts as string}
-                    onChange={e => up('closingCosts', e.target.value)}>
-                    <option value="buyer">Buyer pays all</option>
-                    <option value="seller">Seller pays all</option>
-                    <option value="split">Split equally</option>
-                    <option value="custom">Custom (add to terms)</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Possession Date</span></label>
-                    <input className="input input-bordered" type="date" value={data.possessionDate as string}
-                      onChange={e => up('possessionDate', e.target.value)} />
-                  </div>
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Possession Time</span></label>
-                    <select className="select select-bordered" value={data.possessionTime as string}
-                      onChange={e => up('possessionTime', e.target.value)}>
-                      <option value="closing">At closing</option>
-                      <option value="24hours">Within 24 hours</option>
-                      <option value="48hours">Within 48 hours</option>
-                      <option value="custom">Other (add to terms)</option>
-                    </select>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ── STEP 3: FINANCING ───────────────────────────────────── */}
-            {step === 3 && (
-              <>
-                <h2 className="text-lg font-bold">Step 3 — Financing</h2>
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Finance Type</span></label>
-                  <select className="select select-bordered" value={data.financeType as string}
-                    onChange={e => up('financeType', e.target.value)}>
-                    <option value="conventional">Conventional</option>
-                    <option value="fha">FHA</option>
-                    <option value="va">VA</option>
-                    <option value="usda">USDA</option>
-                    <option value="cash">Cash</option>
-                    <option value="seller_finance">Seller Finance</option>
-                    <option value="assumption">Assumption</option>
-                  </select>
-                </div>
-                {data.financeType !== 'cash' && (
-                  <>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="form-control">
-                        <label className="label"><span className="label-text font-medium">Loan Amount ($)</span></label>
-                        <input className="input input-bordered" type="number" value={data.loanAmount as string}
-                          onChange={e => up('loanAmount', e.target.value)} />
-                      </div>
-                      <div className="form-control">
-                        <label className="label"><span className="label-text font-medium">Term (years)</span></label>
-                        <select className="select select-bordered" value={data.loanTerm as string}
-                          onChange={e => up('loanTerm', e.target.value)}>
-                          <option value="10">10</option>
-                          <option value="15">15</option>
-                          <option value="20">20</option>
-                          <option value="25">25</option>
-                          <option value="30">30</option>
-                        </select>
-                      </div>
-                      <div className="form-control">
-                        <label className="label"><span className="label-text font-medium">Max Rate (%)</span></label>
-                        <input className="input input-bordered" type="number" step="0.125" value={data.interestRate as string}
-                          onChange={e => up('interestRate', e.target.value)} placeholder="e.g. 7.5" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                      <div>
-                        <p className="font-medium">Finance Contingency</p>
-                        <p className="text-xs text-base-content/50">Buyer must obtain loan approval within N days</p>
-                      </div>
-                      <input type="checkbox" className="toggle toggle-primary" checked={data.financeContingency as boolean}
-                        onChange={e => up('financeContingency', e.target.checked)} />
-                    </div>
-                    {data.financeContingency && (
-                      <div className="form-control">
-                        <label className="label"><span className="label-text font-medium">Finance Contingency Days</span></label>
-                        <input className="input input-bordered" type="number" value={data.financeContDays as string}
-                          onChange={e => up('financeContDays', e.target.value)} />
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                      <div>
-                        <p className="font-medium">Appraisal Contingency</p>
-                        <p className="text-xs text-base-content/50">Sale contingent on property appraising at or above price</p>
-                      </div>
-                      <input type="checkbox" className="toggle toggle-primary" checked={data.appraisalContingency as boolean}
-                        onChange={e => up('appraisalContingency', e.target.checked)} />
-                    </div>
-                    {data.appraisalContingency && (
-                      <div className="form-control">
-                        <label className="label"><span className="label-text font-medium">Appraisal Days</span></label>
-                        <input className="input input-bordered" type="number" value={data.appraisalContDays as string}
-                          onChange={e => up('appraisalContDays', e.target.value)} />
-                      </div>
-                    )}
-                  </>
-                )}
-                {/* Sale contingency */}
-                <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                  <div>
-                    <p className="font-medium">Sale Contingency</p>
-                    <p className="text-xs text-base-content/50">Purchase contingent on buyer selling another property</p>
-                  </div>
-                  <input type="checkbox" className="toggle toggle-warning" checked={data.saleContingency as boolean}
-                    onChange={e => up('saleContingency', e.target.checked)} />
-                </div>
-                {data.saleContingency && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Property to Sell Address</span></label>
-                      <input className="input input-bordered" value={data.saleContingencyAddress as string}
-                        onChange={e => up('saleContingencyAddress', e.target.value)} />
-                    </div>
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Days to Sell</span></label>
-                      <input className="input input-bordered" type="number" value={data.saleContingencyDays as string}
-                        onChange={e => up('saleContingencyDays', e.target.value)} />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── STEP 4: INSPECTION ──────────────────────────────────── */}
-            {step === 4 && (
-              <>
-                <h2 className="text-lg font-bold">Step 4 — Inspection &amp; Option Period</h2>
-                <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                  <div>
-                    <p className="font-medium">Inspection Contingency</p>
-                    <p className="text-xs text-base-content/50">Buyer has right to inspect and request repairs</p>
-                  </div>
-                  <input type="checkbox" className="toggle toggle-primary" checked={data.inspectionContingency as boolean}
-                    onChange={e => up('inspectionContingency', e.target.checked)} />
-                </div>
-                {data.inspectionContingency && (
-                  <div className="form-control">
-                    <label className="label"><span className="label-text font-medium">Inspection Period (days)</span></label>
-                    <input className="input input-bordered" type="number" value={data.inspectionDays as string}
-                      onChange={e => up('inspectionDays', e.target.value)} />
-                  </div>
-                )}
-
-                {/* Option period — MO shows by default */}
-                <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                  <div>
-                    <p className="font-medium">
-                      Option Period
-                      {isMO && <span className="badge badge-info badge-xs ml-2">MO — common</span>}
-                    </p>
-                    <p className="text-xs text-base-content/50">
-                      Buyer pays option fee for unrestricted right to terminate
-                    </p>
-                  </div>
-                  <input type="checkbox" className="toggle toggle-secondary" checked={data.optionPeriod as boolean}
-                    onChange={e => up('optionPeriod', e.target.checked)} />
-                </div>
-                {data.optionPeriod && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Option Days</span></label>
-                      <input className="input input-bordered" type="number" value={data.optionDays as string}
-                        onChange={e => up('optionDays', e.target.value)} />
-                    </div>
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Option Fee ($)</span></label>
-                      <input className="input input-bordered" type="number" value={data.optionFee as string}
-                        onChange={e => up('optionFee', e.target.value)} />
-                    </div>
-                  </div>
-                )}
-
-                {/* Home warranty */}
-                <div className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                  <div>
-                    <p className="font-medium">Home Warranty</p>
-                    <p className="text-xs text-base-content/50">Include a home warranty in the contract</p>
-                  </div>
-                  <input type="checkbox" className="toggle toggle-success" checked={data.homeWarranty as boolean}
-                    onChange={e => up('homeWarranty', e.target.checked)} />
-                </div>
-                {data.homeWarranty && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Warranty Amount ($)</span></label>
-                      <input className="input input-bordered" type="number" value={data.homeWarrantyAmount as string}
-                        onChange={e => up('homeWarrantyAmount', e.target.value)} />
-                    </div>
-                    <div className="form-control">
-                      <label className="label"><span className="label-text font-medium">Paid By</span></label>
-                      <select className="select select-bordered" value={data.homeWarrantyPaidBy as string}
-                        onChange={e => up('homeWarrantyPaidBy', e.target.value)}>
-                        <option value="seller">Seller</option>
-                        <option value="buyer">Buyer</option>
-                        <option value="split">Split</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── STEP 5: ADDENDA ─────────────────────────────────────── */}
-            {step === 5 && (
-              <>
-                <h2 className="text-lg font-bold">Step 5 — Addenda &amp; Disclosures</h2>
-                <p className="text-sm text-base-content/60">Select all addenda that apply to this transaction.</p>
-                {[
-                  { key: 'addendaHOA',        label: 'HOA / CIC Addendum',              desc: 'Homeowners association documents and disclosures' },
-                  { key: 'addendaLead',        label: 'Lead-Based Paint Disclosure',      desc: 'Required for homes built before 1978' },
-                  { key: 'addendaRadon',       label: 'Radon Disclosure',                 desc: isKS ? 'Required by Kansas law' : 'Recommended — MO does not require' },
-                  { key: 'addendaInspection',  label: 'Inspection Addendum',              desc: 'Additional inspection terms and repair negotiation' },
-                  { key: 'addendaSeptic',      label: 'Septic / Well Addendum',           desc: 'Property has private well or septic system' },
-                  { key: 'addendaMold',        label: 'Mold Disclosure Addendum',         desc: 'Known mold history or remediation' },
-                ].map(({ key, label, desc }) => (
-                  <div key={key} className="flex items-center justify-between rounded-lg bg-base-200 px-4 py-3">
-                    <div>
-                      <p className="font-medium">{label}</p>
-                      <p className="text-xs text-base-content/50">{desc}</p>
-                    </div>
-                    <input type="checkbox" className="toggle toggle-primary" checked={data[key] as boolean}
-                      onChange={e => up(key, e.target.checked)} />
-                  </div>
-                ))}
-                <div className="form-control">
-                  <label className="label"><span className="label-text font-medium">Additional Terms / Special Conditions</span></label>
-                  <textarea className="textarea textarea-bordered h-28" value={data.additionalTerms as string}
-                    onChange={e => up('additionalTerms', e.target.value)}
-                    placeholder="Any additional terms, conditions, or inclusions/exclusions..." />
-                </div>
-              </>
-            )}
-
-            {/* ── STEP 6: REVIEW ──────────────────────────────────────── */}
-            {step === 6 && (
-              <>
-                <h2 className="text-lg font-bold">Step 6 — Review &amp; Submit</h2>
-                {!contractUid && (
-                  <div className="alert alert-info py-2 text-sm">
-                    A unique contract ID will be assigned when you submit.
-                  </div>
-                )}
-                {contractUid && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Contract ID:</span>
-                    <span className="badge badge-primary font-mono">{contractUid}</span>
-                  </div>
-                )}
-                <div className="bg-base-200 rounded-lg p-4 text-sm space-y-2">
-                  <div className="font-semibold text-base border-b border-base-300 pb-2 mb-2">
-                    {selectedForm?.form_name}
-                    <span className="badge badge-outline badge-sm font-mono ml-2">Form #{selectedForm?.form_number}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    <span className="text-base-content/60">Buyer</span><span>{data.buyerName as string || '—'}</span>
-                    <span className="text-base-content/60">Seller</span><span>{data.sellerName as string || '—'}</span>
-                    <span className="text-base-content/60">Property</span><span className="col-span-1 truncate">{data.propertyAddress as string || '—'}</span>
-                    <span className="text-base-content/60">Price</span><span>${(data.purchasePrice as string || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</span>
-                    <span className="text-base-content/60">Earnest</span><span>${(data.earnestMoney as string || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</span>
-                    <span className="text-base-content/60">Closing</span><span>{data.closingDate as string || '—'}</span>
-                    <span className="text-base-content/60">Finance</span><span className="capitalize">{data.financeType as string}</span>
-                    {data.financeType !== 'cash' && <><span className="text-base-content/60">Loan</span><span>${(data.loanAmount as string || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</span></>}
-                    <span className="text-base-content/60">Inspection</span><span>{data.inspectionContingency ? `${data.inspectionDays} days` : 'Waived'}</span>
-                    <span className="text-base-content/60">Option Period</span><span>{data.optionPeriod ? `${data.optionDays} days / $${data.optionFee}` : 'None'}</span>
-                  </div>
-                  {(data.addendaHOA || data.addendaLead || data.addendaRadon || data.addendaInspection || data.addendaSeptic || data.addendaMold) && (
-                    <div className="border-t border-base-300 pt-2 mt-2">
-                      <span className="text-base-content/60">Addenda: </span>
-                      {[
-                        data.addendaHOA && 'HOA',
-                        data.addendaLead && 'Lead Paint',
-                        data.addendaRadon && 'Radon',
-                        data.addendaInspection && 'Inspection',
-                        data.addendaSeptic && 'Septic/Well',
-                        data.addendaMold && 'Mold',
-                      ].filter(Boolean).join(', ')}
-                    </div>
-                  )}
-                </div>
-                {error && <div className="alert alert-error text-sm py-2">{error}</div>}
-                <div className="flex gap-3">
-                  <button className="btn btn-outline flex-1" disabled={submitting}
-                    onClick={() => handleSave(true)}>
-                    {submitting ? <span className="loading loading-spinner loading-sm" /> : 'Save Draft'}
-                  </button>
-                  <button className="btn btn-primary flex-1" disabled={submitting}
-                    onClick={() => handleSave(false)}>
-                    {submitting ? <span className="loading loading-spinner loading-sm" /> : 'Submit Contract →'}
-                  </button>
-                </div>
-              </>
-            )}
-
-          </div>
-        </div>
-
-        {/* Navigation */}
-        {step < 6 && (
-          <div className="flex justify-between mt-4">
-            <button className="btn btn-ghost" onClick={() => step === 1 ? setShowPicker(true) : setStep(s => s-1)}>
-              ← Back
-            </button>
-            <div className="flex gap-2">
-              <button className="btn btn-outline btn-sm" onClick={() => handleSave(true)} disabled={submitting}>
-                Save Draft
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-10 text-gray-400 text-sm">No forms match &quot;{search}&quot;</div>
+        ) : (
+          <div className="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
+            {filtered.map(f => (
+              <button
+                key={f.id}
+                className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                onClick={() => onSelect(f)}
+              >
+                <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-mono min-w-[3rem] text-center">
+                  #{f.form_number}
+                </span>
+                <span className="flex flex-col gap-0.5 flex-1 min-w-0">
+                  <span className="font-semibold text-gray-900 text-sm truncate">{f.form_name}</span>
+                  <span className="text-xs text-gray-400">{f.mls_board} · {f.state_code} · v{f.form_version}</span>
+                </span>
+                <ChevronRight size={14} className="text-gray-300 flex-shrink-0" />
               </button>
-              <button className="btn btn-primary" onClick={() => setStep(s => s+1)}>
-                Next →
-              </button>
-            </div>
-          </div>
-        )}
-        {step === 6 && (
-          <div className="flex justify-start mt-4">
-            <button className="btn btn-ghost" onClick={() => setStep(5)}>← Back</button>
+            ))}
           </div>
         )}
       </div>
@@ -710,10 +667,291 @@ function ContractsNewInner() {
   );
 }
 
+// ─── Main Wizard ──────────────────────────────────────────────────────────────
+function ContractsWizardInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const dealId = searchParams.get('dealId') || null;
+  const formSlugParam = searchParams.get('form') || '';
+  const stateParam = (searchParams.get('state') || '').toUpperCase();
+  const addressParam = searchParams.get('propertyAddress') || '';
+
+  const autoState = stateParam === 'KS' || stateParam === 'MO'
+    ? stateParam as 'KS' | 'MO'
+    : addressParam.toUpperCase().includes(', KS') ? 'KS'
+    : addressParam.toUpperCase().includes(', MO') ? 'MO'
+    : '';
+
+  // Form selection — if ?form= param present, skip picker
+  const [selectedForm, setSelectedForm] = useState<AvailableForm | null>(null);
+  const [showPicker, setShowPicker] = useState(!formSlugParam);
+
+  // Load form by slug if ?form= param is present
+  useEffect(() => {
+    if (!formSlugParam) return;
+    (async () => {
+      const { data } = await supabase
+        .from('contract_forms')
+        .select('id, mls_board, state_code, form_name, form_slug, form_version')
+        .eq('form_slug', formSlugParam)
+        .eq('active', true)
+        .single();
+      if (data) {
+        setSelectedForm({ ...data, form_number: 1 });
+        setShowPicker(false);
+      }
+    })();
+  }, [formSlugParam]);
+
+  const [currentStep, setCurrentStep] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [contractUid, setContractUid] = useState<string>('');
+
+  const { register, handleSubmit, watch, setValue, getValues } = useForm<ContractFormData>({
+    defaultValues: {
+      property_address: addressParam,
+      buyer_name_1: searchParams.get('buyerName') || '',
+      seller_name_1: searchParams.get('sellerName') || '',
+      closing_date: searchParams.get('closingDate') || '',
+      state_code: autoState as 'KS' | 'MO' | '',
+    },
+  });
+
+  async function saveContract(status: 'draft' | 'submitted') {
+    setSaving(true);
+    setSaveError(null);
+    const data = getValues();
+    try {
+      // Generate UID on first save
+      const uid = contractUid || generateContractUid();
+      if (!contractUid) setContractUid(uid);
+
+      const res = await fetch('/api/contracts/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dealId,
+          formSlug: selectedForm?.form_slug || formSlugParam,
+          contractFormId: selectedForm?.id,
+          contractUid: uid,
+          existingId: savedId,
+          status,
+          submittedData: { ...data, contract_uid: uid },
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
+      }
+      const result = await res.json();
+      setSavedId(result.id);
+      if (status === 'submitted') {
+        setTimeout(() => {
+          if (dealId) window.close();
+        }, 2000);
+      }
+    } catch (e: any) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const canGoNext = currentStep < STEPS.length;
+  const canGoPrev = currentStep > 1;
+
+  // Show picker if no form selected yet
+  if (showPicker) {
+    return (
+      <FormPicker
+        onSelect={form => {
+          setSelectedForm(form);
+          setShowPicker(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col" style={{ fontFamily: 'sans-serif' }}>
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowPicker(true)}
+            className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+          >
+            <ChevronLeft size={13} /> Change form
+          </button>
+          <div className="h-4 w-px bg-gray-200" />
+          <span className="text-sm font-bold text-gray-800">
+            {selectedForm?.form_name || 'Contract Wizard'}
+          </span>
+          {selectedForm && (
+            <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
+              Form #{selectedForm.form_number}
+            </span>
+          )}
+          {autoState && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${autoState === 'KS' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+              {autoState}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {contractUid && (
+            <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-1 rounded">
+              {contractUid}
+            </span>
+          )}
+          {savedId && (
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              <CheckCircle2 size={12} /> Saved
+            </span>
+          )}
+          <span className="text-xs text-gray-400 font-mono">myredeal contracts</span>
+        </div>
+      </div>
+
+      {/* Step progress */}
+      <div className="bg-white border-b border-gray-100 px-4 py-2 overflow-x-auto">
+        <div className="flex items-center gap-1 min-w-max">
+          {STEPS.map((step, idx) => {
+            const Icon = step.icon;
+            const isActive = step.id === currentStep;
+            const isDone = step.id < currentStep;
+            return (
+              <React.Fragment key={step.id}>
+                <button
+                  onClick={() => setCurrentStep(step.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    isActive ? 'bg-blue-600 text-white' :
+                    isDone ? 'bg-green-50 text-green-700 hover:bg-green-100' :
+                    'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {isDone ? <CheckCircle2 size={13} /> : <Icon size={13} />}
+                  <span className="hidden sm:inline">{step.label}</span>
+                  <span className="sm:hidden">{step.id}</span>
+                </button>
+                {idx < STEPS.length - 1 && (
+                  <ChevronRight size={12} className="text-gray-300 flex-shrink-0" />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Form content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-4 py-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-base font-bold text-gray-900 mb-5">
+              Step {currentStep}: {STEPS[currentStep - 1].label}
+            </h2>
+
+            {currentStep === 1 && (
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} />
+            )}
+            {currentStep === 2 && <Step2 register={register} />}
+            {currentStep === 3 && <Step3 register={register} />}
+            {currentStep === 4 && (
+              <Step4 register={register} watch={watch} setValue={setValue} />
+            )}
+            {currentStep === 5 && (
+              <Step5 register={register} watch={watch} />
+            )}
+            {currentStep === 6 && (
+              <Step6 register={register} watch={watch} />
+            )}
+          </div>
+
+          {/* Error banner */}
+          {saveError && (
+            <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <AlertCircle size={14} />
+              {saveError}
+            </div>
+          )}
+
+          {/* Success banner */}
+          {savedId && !saving && (
+            <div className="mt-3 flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+              <CheckCircle2 size={14} />
+              {contractUid
+                ? `Contract saved — ID: ${contractUid}`
+                : `Contract saved (${savedId.slice(0, 8)}...)`}
+            </div>
+          )}
+
+          {/* Navigation */}
+          <div className="flex items-center justify-between mt-4">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(s => s - 1)}
+              disabled={!canGoPrev}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              <ChevronLeft size={16} /> Previous
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => saveContract('draft')}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Draft
+              </button>
+
+              {canGoNext ? (
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(s => s + 1)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => saveContract('submitted')}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-40"
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  Submit Contract
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FallbackLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 size={28} className="animate-spin text-blue-600" />
+        <p className="text-sm text-gray-500">Loading contract wizard...</p>
+      </div>
+    </div>
+  );
+}
+
 export default function ContractsNewPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading…</div>}>
-      <ContractsNewInner />
+    <Suspense fallback={<FallbackLoader />}>
+      <ContractsWizardInner />
     </Suspense>
   );
 }
