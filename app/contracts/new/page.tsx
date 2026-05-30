@@ -1,0 +1,791 @@
+'use client';
+import React, { useState, useEffect, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { useForm, UseFormRegister, UseFormWatch, UseFormSetValue } from 'react-hook-form';
+import {
+  ChevronRight, ChevronLeft, CheckCircle2, Building2, DollarSign,
+  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle
+} from 'lucide-react';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface ContractFormData {
+  // Step 1 – Parties & Property
+  seller_name_1: string;
+  seller_name_2: string;
+  buyer_name_1: string;
+  buyer_name_2: string;
+  bank_owned_check: boolean;
+  manufactured_home_check: boolean;
+  property_address: string;
+  county: string;
+  legal_desc_1: string;
+  legal_desc_2: string;
+  legal_desc_3: string;
+  state_code: 'KS' | 'MO' | '';
+
+  // Step 2 – Purchase Price & Earnest
+  purchase_price: string;
+  earnest_money_amount: string;
+  earnest_delivery_days: string;
+  earnest_deposited_with: string;
+  earnest_nonrefundable_check: boolean;
+  add_earnest_amount: string;
+  add_earnest_date: string;
+  buyer_broker_compensation: string;
+  seller_additional_costs: string;
+
+  // Step 3 – Closing & Offer Terms
+  closing_date: string;
+  possession_time: string;
+  possession_am_pm: 'AM' | 'PM' | '';
+  possession_location: string;
+  offer_expiration_date: string;
+  offer_expiration_time: string;
+  cash_appraisal_days: string;
+  appraisal_notify_days: string;
+  appraisal_negotiation_days: string;
+
+  // Step 4 – Financing
+  sale_not_contingent_check: boolean;
+  sale_contingent_check: boolean;
+  cash_sale_check: boolean;
+  financed_sale_check: boolean;
+  cash_sale_verify_days: string;
+  primary_conventional_check: boolean;
+  primary_fha_check: boolean;
+  primary_va_check: boolean;
+  primary_usda_check: boolean;
+  primary_owner_financing_check: boolean;
+  primary_other_check: boolean;
+  primary_other_text: string;
+  primary_rate_fixed_check: boolean;
+  primary_rate_adjustable_check: boolean;
+  primary_amortization_years: string;
+  primary_ltv: string;
+  primary_loan_rate_pct: string;
+  buyer_preapproved_check: boolean;
+  buyer_not_preapproved_check: boolean;
+  lender_name: string;
+  not_preapproved_days: string;
+  loan_approval_days: string;
+  lender_appraisal_amount: string;
+
+  // Step 5 – Inspection, Survey & Warranty
+  inspection_period_days: string;
+  renegotiation_period_days: string;
+  survey_days: string;
+  warranty_waive_check: boolean;
+  limited_home_warranty: boolean;
+  warranty_seller_check: boolean;
+  warranty_buyer_check: boolean;
+  warranty_cost: string;
+  warranty_vendor: string;
+  warranty_deductible: string;
+
+  // Step 6 – Addenda & Additional Terms
+  addendum_sellers_disc_check: boolean;
+  addendum_lead_check: boolean;
+  addendum_contingency_check: boolean;
+  addendum_other_1: string;
+  addendum_other_2: string;
+  addendum_other_3: string;
+  additional_inclusions_1: string;
+  additional_inclusions_2: string;
+  exclusions_1: string;
+  additional_terms_1: string;
+  additional_terms_2: string;
+}
+
+// ─── Step Config ──────────────────────────────────────────────────────────────
+const STEPS = [
+  { id: 1, label: 'Parties & Property', icon: Building2 },
+  { id: 2, label: 'Price & Earnest', icon: DollarSign },
+  { id: 3, label: 'Closing & Terms', icon: Calendar },
+  { id: 4, label: 'Financing', icon: CreditCard },
+  { id: 5, label: 'Inspection & Warranty', icon: Search },
+  { id: 6, label: 'Addenda & Review', icon: FileText },
+];
+
+// ─── Shared field components ───────────────────────────────────────────────
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{label}</label>
+      {children}
+      {hint && <p className="text-xs text-gray-400">{hint}</p>}
+    </div>
+  );
+}
+function Input({ reg, placeholder, type = 'text' }: { reg: any; placeholder?: string; type?: string }) {
+  return (
+    <input
+      {...reg}
+      type={type}
+      placeholder={placeholder}
+      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+    />
+  );
+}
+function CheckRow({ reg, label }: { reg: any; label: string }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none">
+      <input {...reg} type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+      <span className="text-sm text-gray-700">{label}</span>
+    </label>
+  );
+}
+function RadioGroup({ name, options, value, onChange }: {
+  name: string; options: { val: string; label: string }[]; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-3">
+      {options.map(o => (
+        <label key={o.val} className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={name}
+            checked={value === o.val}
+            onChange={() => onChange(o.val)}
+            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-700">{o.label}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+// ─── Step 1: Parties & Property ───────────────────────────────────────────────
+function Step1({ register, watch, setValue, stateCode }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+  setValue: UseFormSetValue<ContractFormData>;
+  stateCode: string;
+}) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="md:col-span-2">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">State</span>
+          {stateCode && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${stateCode === 'KS' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+              {stateCode === 'KS' ? 'Kansas' : 'Missouri'} Auto-Detected
+            </span>
+          )}
+        </div>
+        <RadioGroup
+          name="state_code"
+          options={[{ val: 'KS', label: 'Kansas' }, { val: 'MO', label: 'Missouri' }]}
+          value={watch('state_code') || stateCode}
+          onChange={v => setValue('state_code', v as 'KS' | 'MO')}
+        />
+        {watch('state_code') === 'MO' && (
+          <p className="text-xs text-purple-600 mt-1 flex items-center gap-1">
+            <AlertCircle size={11} /> Missouri: Option period applies. Dual agency allowed with written consent.
+          </p>
+        )}
+        {watch('state_code') === 'KS' && (
+          <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+            <AlertCircle size={11} /> Kansas: No dual agency. Seller disclosure required by law. Radon disclosure required.
+          </p>
+        )}
+      </div>
+
+      <Field label="Seller 1 Name / Marital Status">
+        <Input reg={register('seller_name_1')} placeholder="e.g. John Smith, a married person" />
+      </Field>
+      <Field label="Seller 2 Name / Marital Status">
+        <Input reg={register('seller_name_2')} placeholder="(if applicable)" />
+      </Field>
+      <Field label="Buyer 1 Name / Marital Status">
+        <Input reg={register('buyer_name_1')} placeholder="e.g. Jane Doe, a single person" />
+      </Field>
+      <Field label="Buyer 2 Name / Marital Status">
+        <Input reg={register('buyer_name_2')} placeholder="(if applicable)" />
+      </Field>
+
+      <div className="md:col-span-2">
+        <Field label="Property Address">
+          <Input reg={register('property_address')} placeholder="Full street address" />
+        </Field>
+      </div>
+      <Field label="County">
+        <Input reg={register('county')} placeholder="County name" />
+      </Field>
+      <Field label="Legal Description (Line 1)">
+        <Input reg={register('legal_desc_1')} placeholder="Lot/Block/Subdivision" />
+      </Field>
+      <Field label="Legal Description (Line 2)">
+        <Input reg={register('legal_desc_2')} placeholder="(continued)" />
+      </Field>
+      <Field label="Legal Description (Line 3)">
+        <Input reg={register('legal_desc_3')} placeholder="(continued)" />
+      </Field>
+
+      <div className="md:col-span-2 flex gap-6">
+        <CheckRow reg={register('bank_owned_check')} label="Bank-Owned / REO Property" />
+        <CheckRow reg={register('manufactured_home_check')} label="Manufactured Home" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2: Purchase Price & Earnest ─────────────────────────────────────────
+function Step2({ register }: { register: UseFormRegister<ContractFormData> }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <Field label="Purchase Price ($)">
+        <Input reg={register('purchase_price')} placeholder="0.00" type="text" />
+      </Field>
+      <div /> {/* spacer */}
+      <Field label="Earnest Money Amount ($)">
+        <Input reg={register('earnest_money_amount')} placeholder="0.00" />
+      </Field>
+      <Field label="Earnest Money Delivery (days)">
+        <Input reg={register('earnest_delivery_days')} placeholder="e.g. 3" />
+      </Field>
+      <Field label="Earnest Money Deposited With">
+        <Input reg={register('earnest_deposited_with')} placeholder="Title company or escrow agent name" />
+      </Field>
+      <div className="flex items-end gap-4">
+        <CheckRow reg={register('earnest_nonrefundable_check')} label="Earnest Money Non-Refundable" />
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Additional Earnest Money (optional)</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Additional Earnest Amount ($)">
+            <Input reg={register('add_earnest_amount')} placeholder="0.00" />
+          </Field>
+          <Field label="Additional Earnest Due Date">
+            <Input reg={register('add_earnest_date')} type="date" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Cost Allocation</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Buyer's Broker Compensation ($)">
+            <Input reg={register('buyer_broker_compensation')} placeholder="0.00" />
+          </Field>
+          <Field label="Seller Additional Costs ($)">
+            <Input reg={register('seller_additional_costs')} placeholder="0.00" />
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 3: Closing & Offer Terms ────────────────────────────────────────────
+function Step3({ register }: { register: UseFormRegister<ContractFormData> }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <Field label="Closing Date">
+        <Input reg={register('closing_date')} type="date" />
+      </Field>
+      <Field label="Possession Time">
+        <Input reg={register('possession_time')} placeholder="e.g. 5:00" />
+      </Field>
+      <Field label="AM / PM">
+        <select
+          {...register('possession_am_pm')}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+        >
+          <option value="">Select</option>
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </select>
+      </Field>
+      <Field label="Possession Location">
+        <Input reg={register('possession_location')} placeholder="e.g. At closing, At recording, etc." />
+      </Field>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Offer Expiration</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Offer Expiration Date">
+            <Input reg={register('offer_expiration_date')} type="date" />
+          </Field>
+          <Field label="Offer Expiration Time">
+            <Input reg={register('offer_expiration_time')} placeholder="e.g. 5:00 PM" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="md:col-span-2 border-t pt-4 mt-1">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Appraisal Deadlines</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Cash Appraisal Deadline (days)">
+            <Input reg={register('cash_appraisal_days')} placeholder="e.g. 14" />
+          </Field>
+          <Field label="Appraisal Notification (days)">
+            <Input reg={register('appraisal_notify_days')} placeholder="e.g. 3" />
+          </Field>
+          <Field label="Appraisal Negotiation (days)">
+            <Input reg={register('appraisal_negotiation_days')} placeholder="e.g. 5" />
+          </Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 4: Financing ────────────────────────────────────────────────────────
+function Step4({ register, watch, setValue }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+  setValue: UseFormSetValue<ContractFormData>;
+}) {
+  const isCash = watch('cash_sale_check');
+  const isFinanced = watch('financed_sale_check');
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Sale Contingency</p>
+        <div className="flex gap-6">
+          <CheckRow reg={register('sale_not_contingent_check')} label="NOT contingent on sale of other property" />
+          <CheckRow reg={register('sale_contingent_check')} label="IS contingent on sale of other property" />
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Sale Type</p>
+        <div className="flex gap-6 mb-3">
+          <CheckRow reg={register('cash_sale_check')} label="Cash Sale" />
+          <CheckRow reg={register('financed_sale_check')} label="Financed Sale" />
+        </div>
+        {isCash && (
+          <Field label="Cash Verification Deadline (days)">
+            <Input reg={register('cash_sale_verify_days')} placeholder="e.g. 5" />
+          </Field>
+        )}
+      </div>
+
+      {isFinanced && (
+        <>
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Primary Loan Type</p>
+            <div className="flex flex-wrap gap-4">
+              <CheckRow reg={register('primary_conventional_check')} label="Conventional" />
+              <CheckRow reg={register('primary_fha_check')} label="FHA" />
+              <CheckRow reg={register('primary_va_check')} label="VA" />
+              <CheckRow reg={register('primary_usda_check')} label="USDA" />
+              <CheckRow reg={register('primary_owner_financing_check')} label="Owner Financing" />
+              <CheckRow reg={register('primary_other_check')} label="Other" />
+            </div>
+            {watch('primary_other_check') && (
+              <div className="mt-3">
+                <Field label="Other Loan Type (describe)">
+                  <Input reg={register('primary_other_text')} placeholder="Describe loan type" />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Rate Type</p>
+            <div className="flex gap-6 mb-3">
+              <CheckRow reg={register('primary_rate_fixed_check')} label="Fixed" />
+              <CheckRow reg={register('primary_rate_adjustable_check')} label="Adjustable" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-3">
+              <Field label="Amortization (years)">
+                <Input reg={register('primary_amortization_years')} placeholder="e.g. 30" />
+              </Field>
+              <Field label="LTV (%)">
+                <Input reg={register('primary_ltv')} placeholder="e.g. 95" />
+              </Field>
+              <Field label="Loan Rate (%)">
+                <Input reg={register('primary_loan_rate_pct')} placeholder="e.g. 7.25" />
+              </Field>
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Pre-Approval Status</p>
+            <div className="flex gap-6 mb-3">
+              <CheckRow reg={register('buyer_preapproved_check')} label="Buyer is Pre-Approved" />
+              <CheckRow reg={register('buyer_not_preapproved_check')} label="Buyer is NOT Pre-Approved" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <Field label="Lender Name">
+                <Input reg={register('lender_name')} placeholder="Lender name" />
+              </Field>
+              <Field label="Loan Approval Deadline (days)">
+                <Input reg={register('loan_approval_days')} placeholder="e.g. 21" />
+              </Field>
+              {watch('buyer_not_preapproved_check') && (
+                <Field label="Pre-Approval Deadline (days)">
+                  <Input reg={register('not_preapproved_days')} placeholder="e.g. 7" />
+                </Field>
+              )}
+              <Field label="Lender Appraisal Amount ($)">
+                <Input reg={register('lender_appraisal_amount')} placeholder="0.00" />
+              </Field>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Step 5: Inspection, Survey & Warranty ───────────────────────────────────
+function Step5({ register, watch }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+}) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Inspection & Survey</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Inspection Period (days)">
+            <Input reg={register('inspection_period_days')} placeholder="e.g. 10" />
+          </Field>
+          <Field label="Renegotiation Period (days)">
+            <Input reg={register('renegotiation_period_days')} placeholder="e.g. 5" />
+          </Field>
+          <Field label="Survey Deadline (days)">
+            <Input reg={register('survey_days')} placeholder="e.g. 14" />
+          </Field>
+        </div>
+      </div>
+
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Home Warranty</p>
+        <div className="flex gap-6 mb-4">
+          <CheckRow reg={register('limited_home_warranty')} label="Include Home Warranty" />
+          <CheckRow reg={register('warranty_waive_check')} label="Waive Home Warranty" />
+        </div>
+        {watch('limited_home_warranty') && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="flex gap-6 items-center">
+              <CheckRow reg={register('warranty_seller_check')} label="Paid by Seller" />
+              <CheckRow reg={register('warranty_buyer_check')} label="Paid by Buyer" />
+            </div>
+            <div />
+            <Field label="Warranty Cost ($)">
+              <Input reg={register('warranty_cost')} placeholder="0.00" />
+            </Field>
+            <Field label="Deductible ($)">
+              <Input reg={register('warranty_deductible')} placeholder="0.00" />
+            </Field>
+            <Field label="Warranty Vendor">
+              <Input reg={register('warranty_vendor')} placeholder="Warranty company name" />
+            </Field>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 6: Addenda & Review ─────────────────────────────────────────────────
+function Step6({ register, watch }: {
+  register: UseFormRegister<ContractFormData>;
+  watch: UseFormWatch<ContractFormData>;
+}) {
+  const data = watch();
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Standard Addenda</p>
+        <div className="flex flex-col gap-2">
+          <CheckRow reg={register('addendum_sellers_disc_check')} label="Seller&apos;s Disclosure Addendum" />
+          <CheckRow reg={register('addendum_lead_check')} label="Lead-Based Paint Addendum" />
+          <CheckRow reg={register('addendum_contingency_check')} label="Sale Contingency Addendum" />
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Other Addenda</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <Field label="Other Addendum 1">
+            <Input reg={register('addendum_other_1')} placeholder="Addendum name" />
+          </Field>
+          <Field label="Other Addendum 2">
+            <Input reg={register('addendum_other_2')} placeholder="Addendum name" />
+          </Field>
+          <Field label="Other Addendum 3">
+            <Input reg={register('addendum_other_3')} placeholder="Addendum name" />
+          </Field>
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Inclusions & Exclusions</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="Additional Inclusions (1)">
+            <Input reg={register('additional_inclusions_1')} placeholder="Items included in sale" />
+          </Field>
+          <Field label="Additional Inclusions (2)">
+            <Input reg={register('additional_inclusions_2')} placeholder="Items included in sale" />
+          </Field>
+          <Field label="Exclusions (1)">
+            <Input reg={register('exclusions_1')} placeholder="Items excluded from sale" />
+          </Field>
+        </div>
+      </div>
+      <div className="border-t pt-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Additional Terms</p>
+        <div className="flex flex-col gap-3">
+          <Input reg={register('additional_terms_1')} placeholder="Additional terms (line 1)" />
+          <Input reg={register('additional_terms_2')} placeholder="Additional terms (line 2)" />
+        </div>
+      </div>
+      <div className="border-t pt-4 bg-gray-50 rounded-xl p-4">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Quick Review</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          {[
+            { label: 'Property', value: data.property_address || '—' },
+            { label: 'Purchase Price', value: data.purchase_price ? `$${data.purchase_price}` : '—' },
+            { label: 'Closing Date', value: data.closing_date || '—' },
+            { label: 'Earnest Money', value: data.earnest_money_amount ? `$${data.earnest_money_amount}` : '—' },
+            { label: 'Sale Type', value: data.cash_sale_check ? 'Cash' : data.financed_sale_check ? 'Financed' : '—' },
+            { label: 'Inspection (days)', value: data.inspection_period_days || '—' },
+            { label: 'State', value: data.state_code || '—' },
+            { label: 'Lender', value: data.lender_name || '—' },
+          ].map(item => (
+            <div key={item.label} className="bg-white rounded-lg border border-gray-200 p-2">
+              <p className="text-gray-400 mb-0.5">{item.label}</p>
+              <p className="font-semibold text-gray-800 truncate">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Wizard ──────────────────────────────────────────────────────────────
+function ContractsWizardInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const dealId = searchParams.get('dealId') || null;
+  const formSlug = searchParams.get('form') || 'heartland-residential-sale';
+  const stateParam = (searchParams.get('state') || '').toUpperCase();
+
+  // Auto-detect state from address if not in params
+  const addressParam = searchParams.get('propertyAddress') || '';
+  const autoState = stateParam === 'KS' || stateParam === 'MO'
+    ? stateParam as 'KS' | 'MO'
+    : addressParam.toUpperCase().includes(', KS') ? 'KS'
+    : addressParam.toUpperCase().includes(', MO') ? 'MO'
+    : '';
+
+  const [currentStep, setCurrentStep] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+
+  const { register, handleSubmit, watch, setValue, getValues } = useForm<ContractFormData>({
+    defaultValues: {
+      property_address: addressParam,
+      buyer_name_1: searchParams.get('buyerName') || '',
+      seller_name_1: searchParams.get('sellerName') || '',
+      closing_date: searchParams.get('closingDate') || '',
+      state_code: autoState as 'KS' | 'MO' | '',
+    },
+  });
+
+  async function saveContract(status: 'draft' | 'submitted') {
+    setSaving(true);
+    setSaveError(null);
+    const data = getValues();
+    try {
+      const res = await fetch('/api/contracts/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dealId,
+          formSlug,
+          status,
+          submittedData: data,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
+      }
+      const result = await res.json();
+      setSavedId(result.id);
+      if (status === 'submitted') {
+        // Show success, then redirect back to TC app
+        setTimeout(() => {
+          if (dealId) {
+            window.close(); // Close the wizard tab/window
+          }
+        }, 2000);
+      }
+    } catch (e: any) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const canGoNext = currentStep < STEPS.length;
+  const canGoPrev = currentStep > 1;
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col" style={{ fontFamily: 'sans-serif' }}>
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-bold text-gray-800">Heartland MLS — Residential Sale Contract</span>
+          {autoState && (
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${autoState === 'KS' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+              {autoState}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {savedId && (
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              <CheckCircle2 size={12} /> Saved
+            </span>
+          )}
+          <span className="text-xs text-gray-400 font-mono">myredeal contracts</span>
+        </div>
+      </div>
+
+      {/* Step progress */}
+      <div className="bg-white border-b border-gray-100 px-4 py-2 overflow-x-auto">
+        <div className="flex items-center gap-1 min-w-max">
+          {STEPS.map((step, idx) => {
+            const Icon = step.icon;
+            const isActive = step.id === currentStep;
+            const isDone = step.id < currentStep;
+            return (
+              <React.Fragment key={step.id}>
+                <button
+                  onClick={() => setCurrentStep(step.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    isActive ? 'bg-blue-600 text-white' :
+                    isDone ? 'bg-green-50 text-green-700 hover:bg-green-100' :
+                    'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {isDone ? <CheckCircle2 size={13} /> : <Icon size={13} />}
+                  <span className="hidden sm:inline">{step.label}</span>
+                  <span className="sm:hidden">{step.id}</span>
+                </button>
+                {idx < STEPS.length - 1 && (
+                  <ChevronRight size={12} className="text-gray-300 flex-shrink-0" />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Form content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-4 py-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h2 className="text-base font-bold text-gray-900 mb-5">
+              Step {currentStep}: {STEPS[currentStep - 1].label}
+            </h2>
+
+            {currentStep === 1 && (
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} />
+            )}
+            {currentStep === 2 && <Step2 register={register} />}
+            {currentStep === 3 && <Step3 register={register} />}
+            {currentStep === 4 && (
+              <Step4 register={register} watch={watch} setValue={setValue} />
+            )}
+            {currentStep === 5 && (
+              <Step5 register={register} watch={watch} />
+            )}
+            {currentStep === 6 && (
+              <Step6 register={register} watch={watch} />
+            )}
+          </div>
+
+          {/* Error banner */}
+          {saveError && (
+            <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              <AlertCircle size={14} />
+              {saveError}
+            </div>
+          )}
+
+          {/* Success banner */}
+          {savedId && saving === false && (
+            <div className="mt-3 flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+              <CheckCircle2 size={14} />
+              Contract saved successfully (ID: {savedId.slice(0, 8)}...)
+            </div>
+          )}
+
+          {/* Navigation */}
+          <div className="flex items-center justify-between mt-4">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(s => s - 1)}
+              disabled={!canGoPrev}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
+            >
+              <ChevronLeft size={16} /> Previous
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => saveContract('draft')}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Draft
+              </button>
+
+              {canGoNext ? (
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(s => s + 1)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => saveContract('submitted')}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-40"
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  Submit Contract
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FallbackLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 size={28} className="animate-spin text-blue-600" />
+        <p className="text-sm text-gray-500">Loading contract wizard...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function ContractsNewPage() {
+  return (
+    <Suspense fallback={<FallbackLoader />}>
+      <ContractsWizardInner />
+    </Suspense>
+  );
+}
