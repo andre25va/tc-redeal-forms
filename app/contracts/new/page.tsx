@@ -4,23 +4,15 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useForm, UseFormRegister, UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import {
   ChevronRight, ChevronLeft, CheckCircle2, Building2, DollarSign,
-  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle
+  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle, Hash
 } from 'lucide-react';
-import { createBrowserClient } from '@supabase/ssr';
-
-// ─── Supabase client ──────────────────────────────────────────────────────────
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface AvailableForm {
+interface ContractForm {
   id: string;
-  form_number: number;
+  form_name: string;
   mls_board: string;
   state_code: string;
-  form_name: string;
   form_slug: string;
   form_version: string;
 }
@@ -123,12 +115,16 @@ const STEPS = [
   { id: 6, label: 'Addenda & Review', icon: FileText },
 ];
 
-// ─── Unique contract ID ───────────────────────────────────────────────────────
-function generateContractUid(): string {
-  const d = new Date();
-  const date = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `CTR-${date}-${rand}`;
+// ─── Contract UID generator ────────────────────────────────────────────────────
+function generateContractUID(): string {
+  const now = new Date();
+  const datePart = now.getFullYear().toString() +
+    String(now.getMonth() + 1).padStart(2, '0') +
+    String(now.getDate()).padStart(2, '0');
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let rand = '';
+  for (let i = 0; i < 4; i++) rand += chars[Math.floor(Math.random() * chars.length)];
+  return `CTR-${datePart}-${rand}`;
 }
 
 // ─── Shared field components ───────────────────────────────────────────────
@@ -176,6 +172,101 @@ function RadioGroup({ name, options, value, onChange }: {
           <span className="text-sm text-gray-700">{o.label}</span>
         </label>
       ))}
+    </div>
+  );
+}
+
+// ─── Form Picker ──────────────────────────────────────────────────────────────
+function FormPicker({ onSelect }: { onSelect: (f: ContractForm) => void }) {
+  const [forms, setForms] = useState<ContractForm[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/contracts/forms')
+      .then(r => r.json())
+      .then(data => { setForms(data.forms || []); setLoading(false); })
+      .catch(() => { setError('Could not load contract forms.'); setLoading(false); });
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return forms;
+    const q = search.toLowerCase();
+    return forms.filter(f =>
+      f.form_name.toLowerCase().includes(q) ||
+      f.mls_board.toLowerCase().includes(q) ||
+      f.state_code.toLowerCase().includes(q)
+    );
+  }, [forms, search]);
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 size={24} className="animate-spin text-blue-500" />
+    </div>
+  );
+
+  if (error) return (
+    <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+      <AlertCircle size={14} /> {error}
+    </div>
+  );
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900 mb-1">Select Contract Form</h1>
+        <p className="text-sm text-gray-500">Choose the contract form for this transaction.</p>
+      </div>
+
+      {/* Search */}
+      <div className="relative mb-4">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by name, board, or state..."
+          className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+        />
+      </div>
+
+      {/* Form list */}
+      {filtered.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm">No forms match your search.</div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filtered.map((form, idx) => (
+            <button
+              key={form.id}
+              onClick={() => onSelect(form)}
+              className="flex items-start gap-4 p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-400 hover:shadow-sm transition-all text-left group"
+            >
+              {/* Number badge */}
+              <div className="flex-shrink-0 w-8 h-8 bg-blue-50 text-blue-700 rounded-lg flex items-center justify-center text-xs font-bold group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                #{idx + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 group-hover:text-blue-700">{form.form_name}</p>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="text-xs text-gray-500">{form.mls_board}</span>
+                  {form.state_code && (
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${
+                      form.state_code === 'KS' ? 'bg-blue-100 text-blue-700' :
+                      form.state_code === 'MO' ? 'bg-purple-100 text-purple-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {form.state_code}
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400">v{form.form_version}</span>
+                </div>
+              </div>
+              <ChevronRight size={16} className="flex-shrink-0 text-gray-300 group-hover:text-blue-500 mt-1" />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -262,7 +353,7 @@ function Step2({ register }: { register: UseFormRegister<ContractFormData> }) {
       <Field label="Purchase Price ($)">
         <Input reg={register('purchase_price')} placeholder="0.00" type="text" />
       </Field>
-      <div /> {/* spacer */}
+      <div />
       <Field label="Earnest Money Amount ($)">
         <Input reg={register('earnest_money_amount')} placeholder="0.00" />
       </Field>
@@ -291,7 +382,7 @@ function Step2({ register }: { register: UseFormRegister<ContractFormData> }) {
       <div className="md:col-span-2 border-t pt-4 mt-1">
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Cost Allocation</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <Field label="Buyer&apos;s Broker Compensation ($)">
+          <Field label="Buyer's Broker Compensation ($)">
             <Input reg={register('buyer_broker_compensation')} placeholder="0.00" />
           </Field>
           <Field label="Seller Additional Costs ($)">
@@ -510,13 +601,20 @@ function Step5({ register, watch }: {
 }
 
 // ─── Step 6: Addenda & Review ─────────────────────────────────────────────────
-function Step6({ register, watch }: {
+function Step6({ register, watch, contractUID }: {
   register: UseFormRegister<ContractFormData>;
   watch: UseFormWatch<ContractFormData>;
+  contractUID: string;
 }) {
   const data = watch();
   return (
     <div className="flex flex-col gap-5">
+      {/* Contract UID banner */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+        <Hash size={13} className="text-blue-500 flex-shrink-0" />
+        <span className="text-xs text-blue-700">Contract ID: <strong className="font-mono">{contractUID}</strong></span>
+      </div>
+
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Standard Addenda</p>
         <div className="flex flex-col gap-2">
@@ -564,6 +662,7 @@ function Step6({ register, watch }: {
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Quick Review</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           {[
+            { label: 'Contract ID', value: contractUID },
             { label: 'Property', value: data.property_address || '—' },
             { label: 'Purchase Price', value: data.purchase_price ? `$${data.purchase_price}` : '—' },
             { label: 'Closing Date', value: data.closing_date || '—' },
@@ -571,7 +670,6 @@ function Step6({ register, watch }: {
             { label: 'Sale Type', value: data.cash_sale_check ? 'Cash' : data.financed_sale_check ? 'Financed' : '—' },
             { label: 'Inspection (days)', value: data.inspection_period_days || '—' },
             { label: 'State', value: data.state_code || '—' },
-            { label: 'Lender', value: data.lender_name || '—' },
           ].map(item => (
             <div key={item.label} className="bg-white rounded-lg border border-gray-200 p-2">
               <p className="text-gray-400 mb-0.5">{item.label}</p>
@@ -584,96 +682,12 @@ function Step6({ register, watch }: {
   );
 }
 
-// ─── Form Picker ──────────────────────────────────────────────────────────────
-function FormPicker({ onSelect }: { onSelect: (form: AvailableForm) => void }) {
-  const [forms, setForms] = useState<AvailableForm[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from('contract_forms')
-        .select('id, mls_board, state_code, form_name, form_slug, form_version')
-        .eq('active', true)
-        .order('created_at', { ascending: true });
-      if (data) {
-        setForms(data.map((r, i) => ({ ...r, form_number: i + 1 })));
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return forms;
-    const q = search.toLowerCase();
-    return forms.filter(f =>
-      f.form_name.toLowerCase().includes(q) ||
-      f.mls_board.toLowerCase().includes(q) ||
-      f.state_code.toLowerCase().includes(q) ||
-      String(f.form_number).includes(q)
-    );
-  }, [forms, search]);
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" style={{ fontFamily: 'sans-serif' }}>
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm w-full max-w-lg p-6">
-        <div className="mb-5">
-          <h1 className="text-xl font-bold text-gray-900">New Contract</h1>
-          <p className="text-sm text-gray-500 mt-1">Select the contract form for this transaction.</p>
-        </div>
-
-        {/* Search */}
-        <div className="relative mb-4">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            className="w-full border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            placeholder="Search by form name, board, or state..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            autoFocus
-          />
-        </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-10 text-gray-400 gap-2">
-            <Loader2 size={16} className="animate-spin" /> Loading forms...
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">No forms match &quot;{search}&quot;</div>
-        ) : (
-          <div className="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
-            {filtered.map(f => (
-              <button
-                key={f.id}
-                className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                onClick={() => onSelect(f)}
-              >
-                <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-mono min-w-[3rem] text-center">
-                  #{f.form_number}
-                </span>
-                <span className="flex flex-col gap-0.5 flex-1 min-w-0">
-                  <span className="font-semibold text-gray-900 text-sm truncate">{f.form_name}</span>
-                  <span className="text-xs text-gray-400">{f.mls_board} · {f.state_code} · v{f.form_version}</span>
-                </span>
-                <ChevronRight size={14} className="text-gray-300 flex-shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Wizard ──────────────────────────────────────────────────────────────
 function ContractsWizardInner() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const dealId = searchParams.get('dealId') || null;
-  const formSlugParam = searchParams.get('form') || '';
+  const formSlugParam = searchParams.get('form') || null;
   const stateParam = (searchParams.get('state') || '').toUpperCase();
   const addressParam = searchParams.get('propertyAddress') || '';
 
@@ -683,32 +697,18 @@ function ContractsWizardInner() {
     : addressParam.toUpperCase().includes(', MO') ? 'MO'
     : '';
 
-  // Form selection — if ?form= param present, skip picker
-  const [selectedForm, setSelectedForm] = useState<AvailableForm | null>(null);
-  const [showPicker, setShowPicker] = useState(!formSlugParam);
-
-  // Load form by slug if ?form= param is present
-  useEffect(() => {
-    if (!formSlugParam) return;
-    (async () => {
-      const { data } = await supabase
-        .from('contract_forms')
-        .select('id, mls_board, state_code, form_name, form_slug, form_version')
-        .eq('form_slug', formSlugParam)
-        .eq('active', true)
-        .single();
-      if (data) {
-        setSelectedForm({ ...data, form_number: 1 });
-        setShowPicker(false);
-      }
-    })();
-  }, [formSlugParam]);
-
+  // If form slug passed via URL, skip picker and go straight to wizard
+  const [selectedForm, setSelectedForm] = useState<ContractForm | null>(
+    formSlugParam ? { id: '', form_name: '', mls_board: '', state_code: '', form_slug: formSlugParam, form_version: '' } : null
+  );
   const [currentStep, setCurrentStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
-  const [contractUid, setContractUid] = useState<string>('');
+  const [submitted, setSubmitted] = useState(false);
+
+  // Contract UID — generated once on first save and reused
+  const [contractUID, setContractUID] = useState<string>('');
 
   const { register, handleSubmit, watch, setValue, getValues } = useForm<ContractFormData>({
     defaultValues: {
@@ -724,21 +724,17 @@ function ContractsWizardInner() {
     setSaving(true);
     setSaveError(null);
     const data = getValues();
+    const uid = contractUID || generateContractUID();
+    if (!contractUID) setContractUID(uid);
     try {
-      // Generate UID on first save
-      const uid = contractUid || generateContractUid();
-      if (!contractUid) setContractUid(uid);
-
       const res = await fetch('/api/contracts/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dealId,
-          formSlug: selectedForm?.form_slug || formSlugParam,
-          contractFormId: selectedForm?.id,
-          contractUid: uid,
-          existingId: savedId,
+          formSlug: selectedForm?.form_slug || formSlugParam || 'heartland-residential-sale',
           status,
+          contractUID: uid,
           submittedData: { ...data, contract_uid: uid },
         }),
       });
@@ -748,11 +744,7 @@ function ContractsWizardInner() {
       }
       const result = await res.json();
       setSavedId(result.id);
-      if (status === 'submitted') {
-        setTimeout(() => {
-          if (dealId) window.close();
-        }, 2000);
-      }
+      if (status === 'submitted') setSubmitted(true);
     } catch (e: any) {
       setSaveError(e.message || 'Save failed');
     } finally {
@@ -760,20 +752,38 @@ function ContractsWizardInner() {
     }
   }
 
-  const canGoNext = currentStep < STEPS.length;
-  const canGoPrev = currentStep > 1;
-
-  // Show picker if no form selected yet
-  if (showPicker) {
+  // ── Form picker screen ──
+  if (!selectedForm) {
     return (
-      <FormPicker
-        onSelect={form => {
-          setSelectedForm(form);
-          setShowPicker(false);
-        }}
-      />
+      <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'sans-serif' }}>
+        <div className="bg-white border-b border-gray-200 px-4 py-3">
+          <span className="text-sm font-bold text-gray-800">myredeal contracts</span>
+        </div>
+        <FormPicker onSelect={setSelectedForm} />
+      </div>
     );
   }
+
+  // ── Success screen ──
+  if (submitted && savedId) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center" style={{ fontFamily: 'sans-serif' }}>
+        <div className="bg-white rounded-2xl border border-gray-200 p-8 max-w-md w-full mx-4 text-center">
+          <CheckCircle2 size={40} className="text-green-500 mx-auto mb-4" />
+          <h2 className="text-lg font-bold text-gray-900 mb-1">Contract Submitted</h2>
+          <p className="text-sm text-gray-500 mb-4">Your contract has been saved successfully.</p>
+          <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4">
+            <p className="text-xs text-gray-500 mb-1">Contract ID</p>
+            <p className="text-base font-mono font-bold text-blue-700">{contractUID}</p>
+          </div>
+          <p className="text-xs text-gray-400">You may close this window and return to the TC app.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const canGoNext = currentStep < STEPS.length;
+  const canGoPrev = currentStep > 1;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col" style={{ fontFamily: 'sans-serif' }}>
@@ -781,30 +791,22 @@ function ContractsWizardInner() {
       <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowPicker(true)}
-            className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+            onClick={() => setSelectedForm(null)}
+            className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
-            <ChevronLeft size={13} /> Change form
+            ← Change form
           </button>
-          <div className="h-4 w-px bg-gray-200" />
-          <span className="text-sm font-bold text-gray-800">
-            {selectedForm?.form_name || 'Contract Wizard'}
-          </span>
-          {selectedForm && (
-            <span className="text-xs font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
-              Form #{selectedForm.form_number}
-            </span>
-          )}
+          <span className="text-sm font-bold text-gray-800">{selectedForm.form_name || 'Heartland MLS — Residential Sale Contract'}</span>
           {autoState && (
             <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${autoState === 'KS' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
               {autoState}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          {contractUid && (
-            <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-1 rounded">
-              {contractUid}
+        <div className="flex items-center gap-2">
+          {contractUID && (
+            <span className="text-xs text-gray-400 font-mono flex items-center gap-1">
+              <Hash size={11} /> {contractUID}
             </span>
           )}
           {savedId && (
@@ -812,7 +814,6 @@ function ContractsWizardInner() {
               <CheckCircle2 size={12} /> Saved
             </span>
           )}
-          <span className="text-xs text-gray-400 font-mono">myredeal contracts</span>
         </div>
       </div>
 
@@ -866,7 +867,7 @@ function ContractsWizardInner() {
               <Step5 register={register} watch={watch} />
             )}
             {currentStep === 6 && (
-              <Step6 register={register} watch={watch} />
+              <Step6 register={register} watch={watch} contractUID={contractUID || '(saved on submit)'} />
             )}
           </div>
 
@@ -875,16 +876,6 @@ function ContractsWizardInner() {
             <div className="mt-3 flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
               <AlertCircle size={14} />
               {saveError}
-            </div>
-          )}
-
-          {/* Success banner */}
-          {savedId && !saving && (
-            <div className="mt-3 flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-              <CheckCircle2 size={14} />
-              {contractUid
-                ? `Contract saved — ID: ${contractUid}`
-                : `Contract saved (${savedId.slice(0, 8)}...)`}
             </div>
           )}
 
