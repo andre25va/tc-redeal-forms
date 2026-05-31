@@ -31,6 +31,9 @@ interface ContractFormData {
   legal_desc_2: string;
   legal_desc_3: string;
   state_code: 'KS' | 'MO' | '';
+  mls_number: string;
+  property_city: string;
+  property_zip: string;
 
   // Step 2 – Purchase Price & Earnest
   purchase_price: string;
@@ -176,6 +179,21 @@ function RadioGroup({ name, options, value, onChange }: {
   );
 }
 
+
+interface MlsResult {
+  mlsNumber?: string | null;
+  mlsBoardName?: string | null;
+  listPrice?: string | null;
+  bedrooms?: number | null;
+  bathrooms?: number | null;
+  sqftLiving?: number | null;
+  yearBuilt?: number | null;
+  listingStatus?: string | null;
+  propertyType?: string | null;
+  listingAgentName?: string | null;
+  listingOfficeName?: string | null;
+}
+
 // ─── Form Picker ──────────────────────────────────────────────────────────────
 function FormPicker({ onSelect }: { onSelect: (f: ContractForm) => void }) {
   const [forms, setForms] = useState<ContractForm[]>([]);
@@ -272,11 +290,15 @@ function FormPicker({ onSelect }: { onSelect: (f: ContractForm) => void }) {
 }
 
 // ─── Step 1: Parties & Property ───────────────────────────────────────────────
-function Step1({ register, watch, setValue, stateCode }: {
+function Step1({ register, watch, setValue, stateCode, onFetchMls, mlsFetching, mlsFetchStatus, mlsData }: {
   register: UseFormRegister<ContractFormData>;
   watch: UseFormWatch<ContractFormData>;
   setValue: UseFormSetValue<ContractFormData>;
   stateCode: string;
+  onFetchMls: () => void;
+  mlsFetching: boolean;
+  mlsFetchStatus: '' | 'found' | 'not_found';
+  mlsData: MlsResult | null;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -322,9 +344,55 @@ function Step1({ register, watch, setValue, stateCode }: {
 
       <div className="md:col-span-2">
         <Field label="Property Address">
-          <Input reg={register('property_address')} placeholder="Full street address" />
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <Input reg={register('property_address')} placeholder="Full street address" />
+            </div>
+            <button
+              type="button"
+              onClick={onFetchMls}
+              disabled={mlsFetching || !watch('property_address')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {mlsFetching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+              {mlsFetching ? 'Fetching…' : 'Fetch MLS Info'}
+            </button>
+          </div>
+        </Field>
+        {mlsFetchStatus === 'found' && mlsData && (
+          <div className="mt-2 p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-800 flex flex-wrap gap-x-4 gap-y-1">
+            <span className="font-semibold text-green-700">✓ Property Found</span>
+            {mlsData.mlsNumber && <span><span className="text-green-600 font-medium">MLS#:</span> {mlsData.mlsNumber}</span>}
+            {mlsData.propertyType && <span>{mlsData.propertyType}</span>}
+            {mlsData.bedrooms != null && <span>{mlsData.bedrooms} bed</span>}
+            {mlsData.bathrooms != null && <span>{mlsData.bathrooms} bath</span>}
+            {mlsData.sqftLiving != null && <span>{mlsData.sqftLiving.toLocaleString()} sqft</span>}
+            {mlsData.listPrice && <span><span className="text-green-600 font-medium">List:</span> {mlsData.listPrice}</span>}
+            {mlsData.listingStatus && <span className="font-medium">{mlsData.listingStatus}</span>}
+          </div>
+        )}
+        {mlsFetchStatus === 'not_found' && (
+          <p className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+            <AlertCircle size={11} /> Property not found — you can still continue manually.
+          </p>
+        )}
+      </div>
+
+      <Field label="City">
+        <Input reg={register('property_city')} placeholder="City" />
+      </Field>
+      <Field label="Zip Code">
+        <Input reg={register('property_zip')} placeholder="Zip" />
+      </Field>
+
+      <div className="md:col-span-2">
+        <Field label="MLS # (optional)">
+          <div className="flex gap-2 items-center">
+            <Input reg={register('mls_number')} placeholder="e.g. 2410567" />
+          </div>
         </Field>
       </div>
+
       <Field label="County">
         <Input reg={register('county')} placeholder="County name" />
       </Field>
@@ -714,6 +782,38 @@ function ContractsWizardInner() {
 
   // Contract UID — generated once on first save and reused
   const [contractUID, setContractUID] = useState<string>('');
+  const [mlsFetching, setMlsFetching] = useState(false);
+  const [mlsFetchStatus, setMlsFetchStatus] = useState<'' | 'found' | 'not_found'>(''  );
+  const [mlsData, setMlsData] = useState<MlsResult | null>(null);
+
+  const handleFetchMls = async () => {
+    const address = watch('property_address');
+    const city = watch('property_city');
+    const stateVal = (watch('state_code') || autoState) as string;
+    const zip = watch('property_zip');
+    if (!address) return;
+    setMlsFetching(true);
+    setMlsFetchStatus('');
+    try {
+      const res = await fetch('/api/mls/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, city, state: stateVal, zipCode: zip }),
+      });
+      const result = await res.json();
+      if (result.found && result.data) {
+        setMlsData(result.data);
+        setMlsFetchStatus('found');
+        if (result.data.mlsNumber) setValue('mls_number', result.data.mlsNumber);
+      } else {
+        setMlsFetchStatus('not_found');
+      }
+    } catch {
+      setMlsFetchStatus('not_found');
+    } finally {
+      setMlsFetching(false);
+    }
+  };
 
   const { register, handleSubmit, watch, setValue, getValues } = useForm<ContractFormData>({
     defaultValues: {
@@ -722,6 +822,9 @@ function ContractsWizardInner() {
       seller_name_1: searchParams.get('sellerName') || '',
       closing_date: searchParams.get('closingDate') || '',
       state_code: autoState as 'KS' | 'MO' | '',
+      mls_number: '',
+      property_city: '',
+      property_zip: '',
     },
   });
 
@@ -867,7 +970,7 @@ function ContractsWizardInner() {
             </h2>
 
             {currentStep === 1 && (
-              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} />
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} />
             )}
             {currentStep === 2 && <Step2 register={register} />}
             {currentStep === 3 && <Step3 register={register} />}

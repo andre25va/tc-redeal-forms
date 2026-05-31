@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
             ...(agentContactId ? { agent_contact_id: agentContactId } : {}),
             buyer_name: [submittedData?.buyer_name_1, submittedData?.buyer_name_2].filter(Boolean).join(' & ') || null,
             seller_name: [submittedData?.seller_name_1, submittedData?.seller_name_2].filter(Boolean).join(' & ') || null,
+            mls_number: submittedData?.mls_number || null,
             updated_at: new Date().toISOString(),
             ...(status === 'submitted' ? { sent_at: new Date().toISOString() } : {}),
           })
@@ -64,6 +65,9 @@ export async function POST(req: NextRequest) {
           contract_form_id: formRow.id,
           status,
           submitted_data: submittedData,
+          buyer_name: [submittedData?.buyer_name_1, submittedData?.buyer_name_2].filter(Boolean).join(' & ') || null,
+          seller_name: [submittedData?.seller_name_1, submittedData?.seller_name_2].filter(Boolean).join(' & ') || null,
+          mls_number: submittedData?.mls_number || null,
           ...(status === 'submitted' ? { sent_at: new Date().toISOString() } : {}),
         })
         .select('id')
