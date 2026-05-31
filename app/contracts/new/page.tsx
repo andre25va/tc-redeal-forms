@@ -1,13 +1,21 @@
 'use client';
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useForm, UseFormRegister, UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import {
   ChevronRight, ChevronLeft, CheckCircle2, Building2, DollarSign,
-  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle, Hash
+  Calendar, CreditCard, Search, FileText, Save, Send, Loader2, AlertCircle, Hash,
+  UserPlus, Users, X
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+interface ContactResult {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string | null;
+  phone: string | null;
+}
 interface ContractForm {
   id: string;
   form_name: string;
@@ -290,12 +298,144 @@ function FormPicker({ onSelect }: { onSelect: (f: ContractForm) => void }) {
 }
 
 // ─── Step 1: Parties & Property ───────────────────────────────────────────────
-function Step1({ register, watch, setValue, stateCode, onFetchMls, mlsFetching, mlsFetchStatus, mlsData }: {
+
+// ─── BuyerField ──────────────────────────────────────────────────────────────
+function BuyerField({ label, value, onChange, placeholder }: {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  placeholder: string;
+}) {
+  const [query, setQuery] = useState(value || '');
+  const [results, setResults] = useState<ContactResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newBuyer, setNewBuyer] = useState({ first_name: '', last_name: '', email: '', phone: '' });
+  const [saving, setSaving] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // sync external value changes (e.g. URL param pre-fill)
+  useEffect(() => { if (value && !query) setQuery(value); }, [value]);
+
+  // close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => {
+    if (query.length < 2) { setResults([]); setOpen(false); return; }
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/contacts/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        setResults(data.contacts || []);
+        setOpen(true);
+      } catch { setResults([]); } finally { setSearching(false); }
+    }, 300);
+  }, [query]);
+
+  const handleSelect = (c: ContactResult) => {
+    const name = `${c.first_name} ${c.last_name}`;
+    setQuery(name); onChange(name); setOpen(false); setResults([]);
+  };
+
+  const openAddForm = () => {
+    const parts = query.trim().split(' ');
+    setNewBuyer({ first_name: parts[0] || '', last_name: parts.slice(1).join(' ') || '', email: '', phone: '' });
+    setOpen(false); setShowAddForm(true);
+  };
+
+  const handleSaveBuyer = async () => {
+    if (!newBuyer.first_name || !newBuyer.last_name) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/contacts/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newBuyer, contact_type: 'client' }),
+      });
+      if (res.ok) {
+        const name = `${newBuyer.first_name} ${newBuyer.last_name}`;
+        setQuery(name); onChange(name); setShowAddForm(false);
+      }
+    } catch { } finally { setSaving(false); }
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{label}</label>
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); onChange(e.target.value); }}
+          onFocus={() => { if (query.length >= 2 && results.length > 0) setOpen(true); }}
+          placeholder={placeholder}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8"
+        />
+        {searching && <Loader2 className="absolute right-2.5 top-2.5 animate-spin text-gray-400" size={14} />}
+      </div>
+
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+          {results.map(c => (
+            <button key={c.id} type="button" onClick={() => handleSelect(c)}
+              className="w-full text-left px-3 py-2 hover:bg-blue-50 text-sm flex items-center gap-2 border-b border-gray-50 last:border-0">
+              <Users size={12} className="text-gray-400 shrink-0" />
+              <span className="font-medium">{c.first_name} {c.last_name}</span>
+              {c.email && <span className="text-gray-400 text-xs truncate">{c.email}</span>}
+            </button>
+          ))}
+          {query.length >= 2 && (
+            <button type="button" onClick={openAddForm}
+              className="w-full text-left px-3 py-2 hover:bg-green-50 text-sm text-green-700 font-medium flex items-center gap-2 border-t border-gray-100">
+              <UserPlus size={12} /> Add &quot;{query}&quot; as new buyer
+            </button>
+          )}
+        </div>
+      )}
+
+      {showAddForm && (
+        <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-600">New buyer → saved to TC Contacts</p>
+            <button type="button" onClick={() => setShowAddForm(false)} className="text-gray-400 hover:text-gray-600"><X size={14} /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <input value={newBuyer.first_name} onChange={e => setNewBuyer(p => ({...p, first_name: e.target.value}))} placeholder="First name *" className="border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <input value={newBuyer.last_name} onChange={e => setNewBuyer(p => ({...p, last_name: e.target.value}))} placeholder="Last name *" className="border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <input value={newBuyer.email} onChange={e => setNewBuyer(p => ({...p, email: e.target.value}))} placeholder="Email (optional)" className="border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <input value={newBuyer.phone} onChange={e => setNewBuyer(p => ({...p, phone: e.target.value}))} placeholder="Phone (optional)" className="border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={handleSaveBuyer} disabled={saving || !newBuyer.first_name || !newBuyer.last_name}
+              className="px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5">
+              {saving ? <Loader2 size={11} className="animate-spin" /> : <UserPlus size={11} />}
+              {saving ? 'Saving…' : 'Save & Add to Contract'}
+            </button>
+            <button type="button" onClick={() => setShowAddForm(false)} className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByNumber, mlsFetching, mlsFetchStatus, mlsData }: {
   register: UseFormRegister<ContractFormData>;
   watch: UseFormWatch<ContractFormData>;
   setValue: UseFormSetValue<ContractFormData>;
   stateCode: string;
   onFetchMls: () => void;
+  onFetchMlsByNumber: () => void;
   mlsFetching: boolean;
   mlsFetchStatus: '' | 'found' | 'not_found';
   mlsData: MlsResult | null;
@@ -335,12 +475,18 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, mlsFetching, 
       <Field label="Seller 2 Name / Marital Status">
         <Input reg={register('seller_name_2')} placeholder="(if applicable)" />
       </Field>
-      <Field label="Buyer 1 Name / Marital Status">
-        <Input reg={register('buyer_name_1')} placeholder="e.g. Jane Doe, a single person" />
-      </Field>
-      <Field label="Buyer 2 Name / Marital Status">
-        <Input reg={register('buyer_name_2')} placeholder="(if applicable)" />
-      </Field>
+      <BuyerField
+        label="Buyer 1 Name / Marital Status"
+        value={watch('buyer_name_1')}
+        onChange={v => setValue('buyer_name_1', v)}
+        placeholder="e.g. Jane Doe, a single person"
+      />
+      <BuyerField
+        label="Buyer 2 Name / Marital Status"
+        value={watch('buyer_name_2')}
+        onChange={v => setValue('buyer_name_2', v)}
+        placeholder="(if applicable — search or add)"
+      />
 
       <div className="md:col-span-2">
         <Field label="Property Address">
@@ -389,6 +535,15 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, mlsFetching, 
         <Field label="MLS # (optional)">
           <div className="flex gap-2 items-center">
             <Input reg={register('mls_number')} placeholder="e.g. 2410567" />
+            <button
+              type="button"
+              onClick={onFetchMlsByNumber}
+              disabled={mlsFetching || !watch('mls_number')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {mlsFetching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+              Fetch
+            </button>
           </div>
         </Field>
       </div>
@@ -815,6 +970,34 @@ function ContractsWizardInner() {
     }
   };
 
+  const handleFetchMlsByNumber = async () => {
+    const mlsNum = watch('mls_number');
+    if (!mlsNum) return;
+    setMlsFetching(true);
+    setMlsFetchStatus('');
+    try {
+      const res = await fetch('/api/mls/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mlsNumber: mlsNum, state: (watch('state_code') || autoState) as string }),
+      });
+      const result = await res.json();
+      if (result.found && result.data) {
+        setMlsData(result.data);
+        setMlsFetchStatus('found');
+        if (result.data.address && !watch('property_address')) setValue('property_address', result.data.address);
+        if (result.data.city && !watch('property_city')) setValue('property_city', result.data.city);
+        if (result.data.zip && !watch('property_zip')) setValue('property_zip', result.data.zip);
+      } else {
+        setMlsFetchStatus('not_found');
+      }
+    } catch {
+      setMlsFetchStatus('not_found');
+    } finally {
+      setMlsFetching(false);
+    }
+  };
+
   const { register, handleSubmit, watch, setValue, getValues } = useForm<ContractFormData>({
     defaultValues: {
       property_address: addressParam,
@@ -970,7 +1153,7 @@ function ContractsWizardInner() {
             </h2>
 
             {currentStep === 1 && (
-              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} />
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} onFetchMlsByNumber={handleFetchMlsByNumber} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} />
             )}
             {currentStep === 2 && <Step2 register={register} />}
             {currentStep === 3 && <Step3 register={register} />}
