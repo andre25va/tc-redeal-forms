@@ -328,9 +328,9 @@ function combineParty(name: string, marital: 'ASP' | 'AMP' | '') {
 }
 
 // ─── SellerField (plain text + marital toggle) ────────────────────────────────
-function SellerField({ label, value, onChange, placeholder }: {
+function SellerField({ label, value = '', onChange, placeholder }: {
   label: string;
-  value: string;
+  value?: string;
   onChange: (val: string) => void;
   placeholder: string;
 }) {
@@ -365,9 +365,9 @@ function SellerField({ label, value, onChange, placeholder }: {
 }
 
 // ─── BuyerField (combobox + marital toggle) ───────────────────────────────────
-function BuyerField({ label, value, onChange, placeholder }: {
+function BuyerField({ label, value = '', onChange, placeholder }: {
   label: string;
-  value: string;
+  value?: string;
   onChange: (val: string) => void;
   placeholder: string;
 }) {
