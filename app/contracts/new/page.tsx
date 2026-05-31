@@ -299,14 +299,84 @@ function FormPicker({ onSelect }: { onSelect: (f: ContractForm) => void }) {
 
 // ─── Step 1: Parties & Property ───────────────────────────────────────────────
 
-// ─── BuyerField ──────────────────────────────────────────────────────────────
+// ─── MaritalToggle ────────────────────────────────────────────────────────────
+function MaritalToggle({ value, onChange }: { value: 'ASP' | 'AMP' | ''; onChange: (v: 'ASP' | 'AMP' | '') => void }) {
+  return (
+    <div className="flex gap-2 mt-1.5">
+      {(['ASP', 'AMP'] as const).map(opt => (
+        <button
+          key={opt}
+          type="button"
+          onClick={() => onChange(value === opt ? '' : opt)}
+          className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+            value === opt
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-500 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+          }`}
+        >
+          {opt} <span className="font-normal opacity-80">({opt === 'ASP' ? 'single' : 'married'})</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function combineParty(name: string, marital: 'ASP' | 'AMP' | '') {
+  if (!name.trim()) return name;
+  if (!marital) return name;
+  return `${name}, ${marital === 'ASP' ? 'a single person' : 'a married person'}`;
+}
+
+// ─── SellerField (plain text + marital toggle) ────────────────────────────────
+function SellerField({ label, value, onChange, placeholder }: {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  placeholder: string;
+}) {
+  const [name, setName] = useState(() => {
+    // strip known marital suffix on mount if pre-filled
+    return value.replace(/, a (single|married) person$/, '').trim();
+  });
+  const [marital, setMarital] = useState<'ASP' | 'AMP' | ''>(() => {
+    if (value.endsWith(', a single person')) return 'ASP';
+    if (value.endsWith(', a married person')) return 'AMP';
+    return '';
+  });
+
+  const update = (n: string, m: 'ASP' | 'AMP' | '') => {
+    setName(n); setMarital(m);
+    onChange(combineParty(n, m));
+  };
+
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{label}</label>
+      <input
+        type="text"
+        value={name}
+        onChange={e => update(e.target.value, marital)}
+        placeholder={placeholder}
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+      />
+      <MaritalToggle value={marital} onChange={m => update(name, m)} />
+    </div>
+  );
+}
+
+// ─── BuyerField (combobox + marital toggle) ───────────────────────────────────
 function BuyerField({ label, value, onChange, placeholder }: {
   label: string;
   value: string;
   onChange: (val: string) => void;
   placeholder: string;
 }) {
-  const [query, setQuery] = useState(value || '');
+  const [query, setQuery] = useState(() => value.replace(/, a (single|married) person$/, '').trim());
+  const [marital, setMarital] = useState<'ASP' | 'AMP' | ''>(() => {
+    if (value.endsWith(', a single person')) return 'ASP';
+    if (value.endsWith(', a married person')) return 'AMP';
+    return '';
+  });
   const [results, setResults] = useState<ContactResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
@@ -316,8 +386,13 @@ function BuyerField({ label, value, onChange, placeholder }: {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  // sync external value changes (e.g. URL param pre-fill)
-  useEffect(() => { if (value && !query) setQuery(value); }, [value]);
+  // sync external value changes (e.g. URL param pre-fill) — name only
+  useEffect(() => {
+    if (value && !query) {
+      const namePart = value.replace(/, a (single|married) person$/, '').trim();
+      setQuery(namePart);
+    }
+  }, [value]);
 
   // close dropdown on outside click
   useEffect(() => {
@@ -344,7 +419,7 @@ function BuyerField({ label, value, onChange, placeholder }: {
 
   const handleSelect = (c: ContactResult) => {
     const name = `${c.first_name} ${c.last_name}`;
-    setQuery(name); onChange(name); setOpen(false); setResults([]);
+    setQuery(name); onChange(combineParty(name, marital)); setOpen(false); setResults([]);
   };
 
   const openAddForm = () => {
@@ -364,7 +439,7 @@ function BuyerField({ label, value, onChange, placeholder }: {
       });
       if (res.ok) {
         const name = `${newBuyer.first_name} ${newBuyer.last_name}`;
-        setQuery(name); onChange(name); setShowAddForm(false);
+        setQuery(name); onChange(combineParty(name, marital)); setShowAddForm(false);
       }
     } catch { } finally { setSaving(false); }
   };
@@ -376,13 +451,14 @@ function BuyerField({ label, value, onChange, placeholder }: {
         <input
           type="text"
           value={query}
-          onChange={e => { setQuery(e.target.value); onChange(e.target.value); }}
+          onChange={e => { setQuery(e.target.value); onChange(combineParty(e.target.value, marital)); }}
           onFocus={() => { if (query.length >= 2 && results.length > 0) setOpen(true); }}
           placeholder={placeholder}
           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8"
         />
         {searching && <Loader2 className="absolute right-2.5 top-2.5 animate-spin text-gray-400" size={14} />}
       </div>
+      <MaritalToggle value={marital} onChange={m => { setMarital(m); onChange(combineParty(query, m)); }} />
 
       {open && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
@@ -469,12 +545,18 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
         )}
       </div>
 
-      <Field label="Seller 1 Name / Marital Status">
-        <Input reg={register('seller_name_1')} placeholder="e.g. John Smith, a married person" />
-      </Field>
-      <Field label="Seller 2 Name / Marital Status">
-        <Input reg={register('seller_name_2')} placeholder="(if applicable)" />
-      </Field>
+      <SellerField
+        label="Seller 1 Name / Marital Status"
+        value={watch('seller_name_1')}
+        onChange={v => setValue('seller_name_1', v)}
+        placeholder="e.g. John Smith"
+      />
+      <SellerField
+        label="Seller 2 Name / Marital Status"
+        value={watch('seller_name_2')}
+        onChange={v => setValue('seller_name_2', v)}
+        placeholder="(if applicable)"
+      />
       <BuyerField
         label="Buyer 1 Name / Marital Status"
         value={watch('buyer_name_1')}
