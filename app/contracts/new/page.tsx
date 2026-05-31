@@ -690,6 +690,11 @@ function ContractsWizardInner() {
   const formSlugParam = searchParams.get('form') || null;
   const stateParam = (searchParams.get('state') || '').toUpperCase();
   const addressParam = searchParams.get('propertyAddress') || '';
+  const agentContactId = searchParams.get('agentContactId') || null;
+  const agentName = searchParams.get('agentName') || null;
+  const agentEmail = searchParams.get('agentEmail') || null;
+  const agentPhone = searchParams.get('agentPhone') || null;
+  const agentCompany = searchParams.get('agentCompany') || null;
 
   const autoState = stateParam === 'KS' || stateParam === 'MO'
     ? stateParam as 'KS' | 'MO'
@@ -732,6 +737,7 @@ function ContractsWizardInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dealId,
+          agentContactId,
           formSlug: selectedForm?.form_slug || formSlugParam || 'heartland-residential-sale',
           status,
           contractUID: uid,
@@ -804,6 +810,11 @@ function ContractsWizardInner() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {agentName && (
+            <span className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-medium">
+              {agentName}{agentCompany ? ` · ${agentCompany}` : ''}
+            </span>
+          )}
           {contractUID && (
             <span className="text-xs text-gray-400 font-mono flex items-center gap-1">
               <Hash size={11} /> {contractUID}
