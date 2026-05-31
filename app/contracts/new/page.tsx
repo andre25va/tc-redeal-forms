@@ -35,9 +35,7 @@ interface ContractFormData {
   manufactured_home_check: boolean;
   property_address: string;
   county: string;
-  legal_desc_1: string;
-  legal_desc_2: string;
-  legal_desc_3: string;
+  legal_description: string;
   state_code: 'KS' | 'MO' | '';
   mls_number: string;
   property_city: string;
@@ -633,15 +631,16 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
       <Field label="County">
         <Input reg={register('county')} placeholder="County name" />
       </Field>
-      <Field label="Legal Description (Line 1)">
-        <Input reg={register('legal_desc_1')} placeholder="Lot/Block/Subdivision" />
-      </Field>
-      <Field label="Legal Description (Line 2)">
-        <Input reg={register('legal_desc_2')} placeholder="(continued)" />
-      </Field>
-      <Field label="Legal Description (Line 3)">
-        <Input reg={register('legal_desc_3')} placeholder="(continued)" />
-      </Field>
+      <div className="md:col-span-2">
+        <Field label="Legal Description">
+          <textarea
+            {...register('legal_description')}
+            placeholder="e.g. Lot 14, Block 3, Timber Ridge Subdivision, City of Kansas City, Jackson County, Missouri"
+            rows={3}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
+          />
+        </Field>
+      </div>
 
       <div className="md:col-span-2 flex gap-6">
         <CheckRow reg={register('bank_owned_check')} label="Bank-Owned / REO Property" />
@@ -1042,6 +1041,9 @@ function ContractsWizardInner() {
         setMlsData(result.data);
         setMlsFetchStatus('found');
         if (result.data.mlsNumber) setValue('mls_number', result.data.mlsNumber);
+        if (result.data.zipCode && !watch('property_zip')) setValue('property_zip', result.data.zipCode);
+        if (result.data.county && !watch('county')) setValue('county', result.data.county);
+        if (result.data.legalDescription && !watch('legal_description')) setValue('legal_description', result.data.legalDescription);
       } else {
         setMlsFetchStatus('not_found');
       }
@@ -1069,7 +1071,9 @@ function ContractsWizardInner() {
         setMlsFetchStatus('found');
         if (result.data.address && !watch('property_address')) setValue('property_address', result.data.address);
         if (result.data.city && !watch('property_city')) setValue('property_city', result.data.city);
-        if (result.data.zip && !watch('property_zip')) setValue('property_zip', result.data.zip);
+        if (result.data.zipCode && !watch('property_zip')) setValue('property_zip', result.data.zipCode);
+        if (result.data.county && !watch('county')) setValue('county', result.data.county);
+        if (result.data.legalDescription && !watch('legal_description')) setValue('legal_description', result.data.legalDescription);
       } else {
         setMlsFetchStatus('not_found');
       }
