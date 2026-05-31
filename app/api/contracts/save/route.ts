@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
   try {
-    const { dealId, formSlug, status, contractUID, submittedData } = await req.json();
+    const { dealId, agentContactId, formSlug, status, contractUID, submittedData } = await req.json();
 
     if (!formSlug) {
       return NextResponse.json({ error: 'formSlug is required' }, { status: 400 });
@@ -40,6 +40,9 @@ export async function POST(req: NextRequest) {
           .update({
             status,
             submitted_data: submittedData,
+            ...(agentContactId ? { agent_contact_id: agentContactId } : {}),
+            buyer_name: [submittedData?.buyer_name_1, submittedData?.buyer_name_2].filter(Boolean).join(' & ') || null,
+            seller_name: [submittedData?.seller_name_1, submittedData?.seller_name_2].filter(Boolean).join(' & ') || null,
             updated_at: new Date().toISOString(),
             ...(status === 'submitted' ? { sent_at: new Date().toISOString() } : {}),
           })
@@ -57,6 +60,7 @@ export async function POST(req: NextRequest) {
         .from('contract_submissions')
         .insert({
           deal_id: dealId || null,
+          agent_contact_id: agentContactId || null,
           contract_form_id: formRow.id,
           status,
           submitted_data: submittedData,
