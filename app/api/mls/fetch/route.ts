@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceClient } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
+
+function serviceClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const { address, city, state, zipCode } = await req.json();
+    const { address, city, state, zipCode, mlsNumber } = await req.json();
 
-    if (!address) {
-      return NextResponse.json({ error: 'address is required' }, { status: 400 });
+    if (!address && !mlsNumber) {
+      return NextResponse.json({ error: 'address or mlsNumber is required' }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
+    const supabase = serviceClient();
 
     const { data, error } = await (supabase as any).functions.invoke('fetch-mls-number', {
-      body: { address, city, state, zipCode },
+      body: { address, city, state, zipCode, mlsNumber },
     });
 
     if (error) {
