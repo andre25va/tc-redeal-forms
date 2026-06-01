@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-function serviceClient() {
+function anonClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 }
 
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'address or mlsNumber is required' }, { status: 400 });
     }
 
-    const supabase = serviceClient();
+    const supabase = anonClient();
 
     const { data, error } = await (supabase as any).functions.invoke('fetch-mls-number', {
       body: { address, city, state, zipCode, mlsNumber },
