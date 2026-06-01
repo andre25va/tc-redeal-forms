@@ -503,7 +503,7 @@ function BuyerField({ label, value = '', onChange, placeholder }: {
   );
 }
 
-function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByNumber, mlsFetching, mlsFetchStatus, mlsData, onFetchLegalDesc, legalFetching, legalFetchStatus }: {
+function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByNumber, mlsFetching, mlsFetchStatus, mlsData }: {
   register: UseFormRegister<ContractFormData>;
   watch: UseFormWatch<ContractFormData>;
   setValue: UseFormSetValue<ContractFormData>;
@@ -513,9 +513,6 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
   mlsFetching: boolean;
   mlsFetchStatus: '' | 'found' | 'not_found';
   mlsData: MlsResult | null;
-  onFetchLegalDesc: () => void;
-  legalFetching: boolean;
-  legalFetchStatus: '' | 'found' | 'not_found';
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -636,29 +633,12 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
       </Field>
       <div className="md:col-span-2">
         <Field label="Legal Description">
-          <div className="flex items-start gap-2">
-            <textarea
-              {...register('legal_description')}
-              placeholder="e.g. Lot 14, Block 3, Timber Ridge Subdivision, City of Kansas City, Jackson County, Missouri"
-              rows={3}
-              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
-            />
-            <button
-              type="button"
-              onClick={onFetchLegalDesc}
-              disabled={legalFetching || !watch('property_address')}
-              className="shrink-0 mt-0.5 inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {legalFetching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-              {legalFetching ? 'Fetching…' : 'Fetch Legal Desc'}
-            </button>
-          </div>
-          {legalFetchStatus === 'found' && (
-            <p className="mt-1 text-xs text-green-600 font-medium">✓ Legal description fetched from Realist</p>
-          )}
-          {legalFetchStatus === 'not_found' && (
-            <p className="mt-1 text-xs text-red-500">Could not fetch — please enter manually</p>
-          )}
+          <textarea
+            {...register('legal_description')}
+            placeholder="e.g. Lot 14, Block 3, Timber Ridge Subdivision, City of Kansas City, Jackson County, Missouri"
+            rows={3}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
+          />
         </Field>
       </div>
 
@@ -1062,8 +1042,8 @@ function ContractsWizardInner() {
         setMlsFetchStatus('found');
         if (result.data.mlsNumber) setValue('mls_number', result.data.mlsNumber);
         if (result.data.zipCode && !watch('property_zip')) setValue('property_zip', result.data.zipCode);
-        if (result.data.county && !watch('county')) setValue('county', result.data.county);
-        if (result.data.legalDescription && !watch('legal_description')) setValue('legal_description', result.data.legalDescription);
+        if (result.data.county) setValue('county', result.data.county);
+        if (result.data.legalDescription) setValue('legal_description', result.data.legalDescription);
       } else {
         setMlsFetchStatus('not_found');
       }
@@ -1092,8 +1072,8 @@ function ContractsWizardInner() {
         if (result.data.address && !watch('property_address')) setValue('property_address', result.data.address);
         if (result.data.city && !watch('property_city')) setValue('property_city', result.data.city);
         if (result.data.zipCode && !watch('property_zip')) setValue('property_zip', result.data.zipCode);
-        if (result.data.county && !watch('county')) setValue('county', result.data.county);
-        if (result.data.legalDescription && !watch('legal_description')) setValue('legal_description', result.data.legalDescription);
+        if (result.data.county) setValue('county', result.data.county);
+        if (result.data.legalDescription) setValue('legal_description', result.data.legalDescription);
       } else {
         setMlsFetchStatus('not_found');
       }
@@ -1101,36 +1081,6 @@ function ContractsWizardInner() {
       setMlsFetchStatus('not_found');
     } finally {
       setMlsFetching(false);
-    }
-  };
-
-  const [legalFetching, setLegalFetching] = useState(false);
-  const [legalFetchStatus, setLegalFetchStatus] = useState<'' | 'found' | 'not_found'>('');
-
-  const handleFetchLegalDesc = async () => {
-    const address = watch('property_address');
-    const city = watch('property_city');
-    const zip = watch('property_zip');
-    if (!address) return;
-    const fullAddress = [address, city, zip].filter(Boolean).join(', ');
-    setLegalFetching(true);
-    setLegalFetchStatus('');
-    try {
-      const res = await fetch(
-        `https://mls.srv1462857.hstgr.cloud/property?address=${encodeURIComponent(fullAddress)}`,
-        { signal: AbortSignal.timeout(120000) }
-      );
-      const data = await res.json();
-      if (data.found && data.legal_description) {
-        setValue('legal_description', data.legal_description);
-        setLegalFetchStatus('found');
-      } else {
-        setLegalFetchStatus('not_found');
-      }
-    } catch {
-      setLegalFetchStatus('not_found');
-    } finally {
-      setLegalFetching(false);
     }
   };
 
@@ -1289,7 +1239,7 @@ function ContractsWizardInner() {
             </h2>
 
             {currentStep === 1 && (
-              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} onFetchMlsByNumber={handleFetchMlsByNumber} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} onFetchLegalDesc={handleFetchLegalDesc} legalFetching={legalFetching} legalFetchStatus={legalFetchStatus} />
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} onFetchMlsByNumber={handleFetchMlsByNumber} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} />
             )}
             {currentStep === 2 && <Step2 register={register} />}
             {currentStep === 3 && <Step3 register={register} />}
