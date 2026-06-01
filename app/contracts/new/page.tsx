@@ -503,7 +503,7 @@ function BuyerField({ label, value = '', onChange, placeholder }: {
   );
 }
 
-function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByNumber, mlsFetching, mlsFetchStatus, mlsData }: {
+function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByNumber, mlsFetching, mlsFetchStatus, mlsData, onFetchLegalDesc, legalFetching, legalError }: {
   register: UseFormRegister<ContractFormData>;
   watch: UseFormWatch<ContractFormData>;
   setValue: UseFormSetValue<ContractFormData>;
@@ -513,6 +513,9 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
   mlsFetching: boolean;
   mlsFetchStatus: '' | 'found' | 'not_found';
   mlsData: MlsResult | null;
+  onFetchLegalDesc: () => void;
+  legalFetching: boolean;
+  legalError: string;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -633,12 +636,28 @@ function Step1({ register, watch, setValue, stateCode, onFetchMls, onFetchMlsByN
       </Field>
       <div className="md:col-span-2">
         <Field label="Legal Description">
-          <textarea
-            {...register('legal_description')}
-            placeholder="e.g. Lot 14, Block 3, Timber Ridge Subdivision, City of Kansas City, Jackson County, Missouri"
-            rows={3}
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
-          />
+          <div className="flex gap-2 items-start">
+            <textarea
+              {...register('legal_description')}
+              placeholder="e.g. Lot 14, Block 3, Timber Ridge Subdivision, City of Kansas City, Jackson County, Missouri"
+              rows={3}
+              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
+            />
+            <button
+              type="button"
+              onClick={onFetchLegalDesc}
+              disabled={legalFetching || (!watch('mls_number') && !watch('property_address'))}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap mt-0.5"
+            >
+              {legalFetching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+              {legalFetching ? 'Fetching…' : 'Fetch Legal Desc'}
+            </button>
+          </div>
+          {legalError && (
+            <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+              <AlertCircle size={11} /> {legalError}
+            </p>
+          )}
         </Field>
       </div>
 
@@ -1019,8 +1038,10 @@ function ContractsWizardInner() {
   // Contract UID — generated once on first save and reused
   const [contractUID, setContractUID] = useState<string>('');
   const [mlsFetching, setMlsFetching] = useState(false);
-  const [mlsFetchStatus, setMlsFetchStatus] = useState<'' | 'found' | 'not_found'>(''  );
+  const [mlsFetchStatus, setMlsFetchStatus] = useState<'' | 'found' | 'not_found'>('');
   const [mlsData, setMlsData] = useState<MlsResult | null>(null);
+  const [legalFetching, setLegalFetching] = useState(false);
+  const [legalError, setLegalError] = useState('');
 
   const handleFetchMls = async () => {
     const address = watch('property_address');
@@ -1081,6 +1102,34 @@ function ContractsWizardInner() {
       setMlsFetchStatus('not_found');
     } finally {
       setMlsFetching(false);
+    }
+  };
+
+  const handleFetchLegalDesc = async () => {
+    const mlsNum = watch('mls_number');
+    const address = watch('property_address');
+    if (!mlsNum && !address) return;
+    setLegalFetching(true);
+    setLegalError('');
+    try {
+      const body = mlsNum
+        ? { mlsNumber: mlsNum, state: (watch('state_code') || autoState) as string }
+        : { address, city: watch('property_city'), state: (watch('state_code') || autoState) as string, zipCode: watch('property_zip') };
+      const res = await fetch('/api/mls/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await res.json();
+      if (result.found && result.data?.legalDescription) {
+        setValue('legal_description', result.data.legalDescription);
+      } else {
+        setLegalError('Legal description not found — enter manually.');
+      }
+    } catch {
+      setLegalError('Could not fetch legal description.');
+    } finally {
+      setLegalFetching(false);
     }
   };
 
@@ -1239,7 +1288,7 @@ function ContractsWizardInner() {
             </h2>
 
             {currentStep === 1 && (
-              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} onFetchMlsByNumber={handleFetchMlsByNumber} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} />
+              <Step1 register={register} watch={watch} setValue={setValue} stateCode={autoState} onFetchMls={handleFetchMls} onFetchMlsByNumber={handleFetchMlsByNumber} mlsFetching={mlsFetching} mlsFetchStatus={mlsFetchStatus} mlsData={mlsData} onFetchLegalDesc={handleFetchLegalDesc} legalFetching={legalFetching} legalError={legalError} />
             )}
             {currentStep === 2 && <Step2 register={register} />}
             {currentStep === 3 && <Step3 register={register} />}
