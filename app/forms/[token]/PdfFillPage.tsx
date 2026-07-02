@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Send, CheckCircle } from 'lucide-react'
-import { FORM_SECTIONS } from '@/lib/formSections'
+import type { FormBrainSection } from '@/lib/formBrain'
 import ModeSelect from './ModeSelect'
 import ChatFillPage from './ChatFillPage'
 import SimpleFillPage from './SimpleFillPage'
@@ -32,6 +32,7 @@ interface PdfFillPageProps {
     property_address?: string
     seller_email: string
   }
+  formBrainSections?: FormBrainSection[]
 }
 
 const PDF_PT_WIDTH = 612
@@ -39,6 +40,7 @@ const RENDER_SCALE = 1.5
 
 export default function PdfFillPage({
   token, formSlug, formName, pdfUrl, pageCount, fields, savedData, invitation,
+  formBrainSections,
 }: PdfFillPageProps) {
   const [mode, setMode] = useState<'chat' | 'simple' | 'manual' | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
@@ -57,7 +59,7 @@ export default function PdfFillPage({
   const libLoadedRef = useRef(false)
   const pdfLoadedRef = useRef(false)
 
-  const chatAvailable = !!(FORM_SECTIONS[formSlug]?.length)
+  const chatAvailable = !!(formBrainSections?.length)
 
   useEffect(() => {
     const update = () => {
@@ -172,11 +174,11 @@ export default function PdfFillPage({
   }
 
   if (mode === 'chat') {
-    return <ChatFillPage token={token} formName={formName} formSlug={formSlug} fields={fields} formData={formData} onUpdate={handleChatUpdate} onSubmit={handleSubmit} onSwitchMode={() => setMode(null)} invitation={invitation} language={language} onLanguageChange={setLanguage} />
+    return <ChatFillPage token={token} formName={formName} formSlug={formSlug} fields={fields} formData={formData} onUpdate={handleChatUpdate} onSubmit={handleSubmit} onSwitchMode={() => setMode(null)} invitation={invitation} language={language} onLanguageChange={setLanguage} formBrainSections={formBrainSections} />
   }
 
   if (mode === 'simple') {
-    return <SimpleFillPage formName={formName} formSlug={formSlug} fields={fields.map(f => ({ field_key: f.field_key, field_type: f.field_type, page_num: f.page_num }))} formData={formData} onChange={handleChange} onBatchUpdate={handleBatchUpdate} onSubmit={handleSubmit} onSwitchMode={() => setMode(null)} invitation={invitation} language={language} onLanguageChange={setLanguage} saveStatus={saveStatus} submitting={submitting} />
+    return <SimpleFillPage formName={formName} formSlug={formSlug} fields={fields.map(f => ({ field_key: f.field_key, field_type: f.field_type, page_num: f.page_num }))} formData={formData} onChange={handleChange} onBatchUpdate={handleBatchUpdate} onSubmit={handleSubmit} onSwitchMode={() => setMode(null)} invitation={invitation} language={language} onLanguageChange={setLanguage} saveStatus={saveStatus} submitting={submitting} formBrainSections={formBrainSections} />
   }
 
   const scale = displayWidth / PDF_PT_WIDTH

@@ -2,12 +2,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Send, Loader2, CheckCircle2, FileEdit } from 'lucide-react'
 import {
-  FORM_SECTIONS,
   groupFieldsForSection,
   expandChatUpdates,
   getFormValues,
   ChatField,
 } from '@/lib/formSections'
+import type { FormBrainSection } from '@/lib/formBrain'
 
 interface FieldCoordLite {
   field_key: string
@@ -33,6 +33,7 @@ interface ChatFillPageProps {
   invitation: { seller_name?: string; property_address?: string; seller_email: string }
   language: 'en' | 'es'
   onLanguageChange: (lang: 'en' | 'es') => void
+  formBrainSections?: FormBrainSection[]
 }
 
 const BATCH_SECTIONS = new Set([
@@ -42,9 +43,11 @@ const BATCH_SECTIONS = new Set([
 
 export default function ChatFillPage({
   token, formName, formSlug, fields, formData, onUpdate, onSubmit, onSwitchMode,
-  invitation, language, onLanguageChange,
+  invitation, language, onLanguageChange, formBrainSections,
 }: ChatFillPageProps) {
-  const sections = FORM_SECTIONS[formSlug] ?? []
+  // Use DB-driven sections; fall back to empty array (disables chat)
+  const sections: FormBrainSection[] = formBrainSections ?? []
+
   const [sectionIdx, setSectionIdx] = useState(0)
   const [messages, setMessages] = useState<Message[]>([])
   const [selectedChips, setSelectedChips] = useState<string[]>([])
@@ -68,7 +71,8 @@ export default function ChatFillPage({
   const getSectionFields = useCallback((idx: number): FieldCoordLite[] => {
     const section = sections[idx]
     if (!section) return []
-    return fields.filter(f => section.prefixes.some(p => f.field_key.startsWith(p)))
+    // Phase 2: use fieldKeys instead of prefix matching
+    return fields.filter(f => section.fieldKeys.includes(f.field_key))
   }, [sections, fields])
 
   const startSection = useCallback(async (idx: number) => {

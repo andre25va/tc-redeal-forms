@@ -1,7 +1,8 @@
 'use client'
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, Send, ArrowLeft, MapPin, Eye, EyeOff, X, ChevronUp, ChevronDown } from 'lucide-react'
-import { FORM_SECTIONS, groupFieldsForSection } from '@/lib/formSections'
+import { groupFieldsForSection } from '@/lib/formSections'
+import type { FormBrainSection } from '@/lib/formBrain'
 
 interface FieldCoordLite {
   field_key: string
@@ -40,6 +41,7 @@ interface SimpleFillPageProps {
   onLanguageChange: (lang: 'en' | 'es') => void
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
   submitting: boolean
+  formBrainSections?: FormBrainSection[]
 }
 
 const CHOICE_LABELS: Record<string, Record<string, string>> = {
@@ -231,18 +233,17 @@ function PreviewPanel({
 export default function SimpleFillPage({
   formName, formSlug, fields, formData, onChange, onBatchUpdate,
   onSubmit, onSwitchMode, invitation, language, onLanguageChange, saveStatus, submitting,
+  formBrainSections,
 }: SimpleFillPageProps) {
   const [state, setState] = useState<'MO' | 'KS' | null>(null)
   const [sectionIdx, setSectionIdx] = useState(0)
   const [previewOpen, setPreviewOpen] = useState(false)
 
   const sections = useMemo(() => {
-    const defined = FORM_SECTIONS[formSlug]
-    if (defined?.length) {
-      return defined.map(sec => {
-        const secFields = fields.filter(f =>
-          sec.prefixes.some(p => f.field_key.startsWith(p))
-        )
+    // ── DB-driven sections (Phase 2) ──────────────────────────────────────
+    if (formBrainSections?.length) {
+      return formBrainSections.map(sec => {
+        const secFields = fields.filter(f => sec.fieldKeys.includes(f.field_key))
         return {
           key: sec.key,
           title: language === 'es' && sec.titleEs ? sec.titleEs : sec.title,
@@ -251,6 +252,7 @@ export default function SimpleFillPage({
         }
       }).filter(s => s.chatFields.length > 0)
     }
+    // ── Fallback: page-based grouping ─────────────────────────────────────
     const pages = [...new Set(fields.map(f => f.page_num))].sort((a, b) => a - b)
     return pages.map(p => ({
       key: `page_${p}`,
@@ -258,7 +260,7 @@ export default function SimpleFillPage({
       chatFields: groupFieldsForSection(fields.filter(f => f.page_num === p)),
       firstPage: p,
     })).filter(s => s.chatFields.length > 0)
-  }, [formSlug, fields, language])
+  }, [formBrainSections, fields, language])
 
   const current = sections[sectionIdx]
   const isFirst = sectionIdx === 0
