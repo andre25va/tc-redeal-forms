@@ -30,15 +30,20 @@ export async function POST(req: NextRequest) {
     const isFixtures = sectionKey === 'fixtures'
     const isFirstMessage = !messages || messages.length === 0
 
-    type FieldDef = { key: string; type: string; label: string; choices?: string[] }
+    // Phase 3: extraction_hint and party are now included in field objects
+    type FieldDef = {
+      key: string
+      type: string
+      label: string
+      choices?: string[]
+      extraction_hint?: string
+      party?: string
+    }
     const allFields = fields as FieldDef[]
 
     // Separate yes/no choice fields from detail/text fields
     const choiceFields = allFields.filter(f =>
       f.type === 'choice' && (f.choices?.includes('yes') || f.choices?.includes('no'))
-    )
-    const detailFields = allFields.filter(f =>
-      f.type !== 'choice' || (!f.choices?.includes('yes') && !f.choices?.includes('no'))
     )
 
     const fieldList = allFields
@@ -46,6 +51,9 @@ export async function POST(req: NextRequest) {
       .map(f => {
         let desc = `- ${f.key} (${f.type}): "${f.label}"`
         if (f.choices?.length) desc += ` [options: ${f.choices.join(' / ')}]`
+        // Phase 3: inject extraction hint so AI knows exactly what to ask / how to interpret answers
+        if (f.extraction_hint) desc += ` [hint: ${f.extraction_hint}]`
+        if (f.party && f.party !== 'seller') desc += ` [filled by: ${f.party}]`
         return desc
       })
       .join('\n')
@@ -118,6 +126,7 @@ CONVERSATION RULES:
 - Accept natural answers: "yeah", "nope", "not really", "we fixed it a few years ago"
 - When you've covered all fields, set COMPLETE to true
 - Always respond in ${lang}
+- Use the [hint: ...] tags in field definitions to guide how you ask questions and interpret answers
 
 QUICK REPLY OPTIONS:
 - When question has 2-10 clear discrete choices, include OPTIONS tag
