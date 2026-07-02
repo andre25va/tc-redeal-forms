@@ -75,13 +75,32 @@ export default function ChatFillPage({
     return fields.filter(f => section.fieldKeys.includes(f.field_key))
   }, [sections, fields])
 
+  // Phase 3: enrich chatFields with extraction_hint + party from DB fieldMeta
+  const enrichChatFields = useCallback((
+    chatFields: ChatField[],
+    sectionMeta: FormBrainSection['fieldMeta']
+  ) => {
+    return chatFields.map(f => {
+      const meta = sectionMeta[f.key]
+      if (!meta) return f
+      return {
+        ...f,
+        ...(meta.extractionHint ? { extraction_hint: meta.extractionHint } : {}),
+        ...(meta.party ? { party: meta.party } : {}),
+      }
+    })
+  }, [])
+
   const startSection = useCallback(async (idx: number) => {
     const section = sections[idx]
     if (!section) { setAllDone(true); return }
 
     const sectionFields = getSectionFields(idx)
-    const chatFields: ChatField[] = groupFieldsForSection(sectionFields)
-    if (chatFields.length === 0) { startSection(idx + 1); return }
+    const rawChatFields: ChatField[] = groupFieldsForSection(sectionFields)
+    if (rawChatFields.length === 0) { startSection(idx + 1); return }
+
+    // Phase 3: enrich with extraction hints
+    const chatFields = enrichChatFields(rawChatFields, section.fieldMeta)
 
     setSectionIdx(idx)
     setMessages([])
@@ -89,7 +108,7 @@ export default function ChatFillPage({
     setLoading(true)
 
     try {
-      const currentFormValues = getFormValues(formDataRef.current, chatFields)
+      const currentFormValues = getFormValues(formDataRef.current, rawChatFields)
       const sectionTitle = language === 'es' ? (section.titleEs ?? section.title) : section.title
 
       const res = await fetch('/api/ai/chat', {
@@ -131,7 +150,7 @@ export default function ChatFillPage({
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sections, fields, language, invitation, onUpdate, getSectionFields])
+  }, [sections, fields, language, invitation, onUpdate, getSectionFields, enrichChatFields])
 
   // Start first section on mount
   useEffect(() => {
@@ -153,8 +172,10 @@ export default function ChatFillPage({
     setLoading(true)
 
     const sectionFields = getSectionFields(sectionIdx)
-    const chatFields: ChatField[] = groupFieldsForSection(sectionFields)
-    const currentFormValues = getFormValues(formDataRef.current, chatFields)
+    const rawChatFields: ChatField[] = groupFieldsForSection(sectionFields)
+    // Phase 3: enrich with extraction hints
+    const chatFields = enrichChatFields(rawChatFields, currentSection.fieldMeta)
+    const currentFormValues = getFormValues(formDataRef.current, rawChatFields)
     const sectionTitle = language === 'es' ? (currentSection.titleEs ?? currentSection.title) : currentSection.title
 
     try {
@@ -197,7 +218,7 @@ export default function ChatFillPage({
     } finally {
       setLoading(false)
     }
-  }, [sections, sectionIdx, loading, messages, fields, language, invitation, onUpdate, getSectionFields, startSection])
+  }, [sections, sectionIdx, loading, messages, fields, language, invitation, onUpdate, getSectionFields, enrichChatFields, startSection])
 
   const handleChipTap = (option: string) => {
     const lastMsg = messages[messages.length - 1]
