@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase'
+import { fetchFormBrainSections } from '@/lib/formBrain'
 import PdfFillPage from './PdfFillPage'
 
 export default async function FormPage({ params }: { params: { token: string } }) {
@@ -78,19 +79,21 @@ export default async function FormPage({ params }: { params: { token: string } }
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const pdfUrl = `${supabaseUrl}/storage/v1/object/public/form-templates/${formTemplate.pdf_template_path}`
 
-  const { data: fields } = await supabase
-    .from('field_coordinates')
-    .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial, required')
-    .eq('form_slug', invitation.form_slug)
-    .order('page_num', { ascending: true })
-
-  const { data: submission } = await supabase
-    .from('form_submissions')
-    .select('form_data')
-    .eq('invitation_id', invitation.id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
+  const [fieldsResult, submissionResult, formBrainSections] = await Promise.all([
+    supabase
+      .from('field_coordinates')
+      .select('field_key, page_num, x, y, width, height, field_type, is_signature, is_initial, required')
+      .eq('form_slug', invitation.form_slug)
+      .order('page_num', { ascending: true }),
+    supabase
+      .from('form_submissions')
+      .select('form_data')
+      .eq('invitation_id', invitation.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single(),
+    fetchFormBrainSections(invitation.form_slug),
+  ])
 
   return (
     <PdfFillPage
@@ -99,13 +102,14 @@ export default async function FormPage({ params }: { params: { token: string } }
       formName={formTemplate.name}
       pdfUrl={pdfUrl}
       pageCount={formTemplate.page_count}
-      fields={fields || []}
-      savedData={(submission?.form_data as Record<string, unknown>) || {}}
+      fields={fieldsResult.data || []}
+      savedData={(submissionResult.data?.form_data as Record<string, unknown>) || {}}
       invitation={{
         seller_name: invitation.seller_name,
         property_address: invitation.property_address,
         seller_email: invitation.seller_email,
       }}
+      formBrainSections={formBrainSections}
     />
   )
 }
