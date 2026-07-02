@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "next": "14.2.29",
+    "@sentry/nextjs": "^8.0.0",
     "@supabase/supabase-js": "^2.39.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174",
